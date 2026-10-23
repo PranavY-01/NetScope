@@ -194,7 +194,7 @@ def test_cli_interrupt_during_preflight(monkeypatch):
     result = runner.invoke(app, ["scan", "some.lan", "--yes-authorized", "--json"])
     assert result.exit_code == 130
     assert result.stdout == ""
-    assert "nothing was scanned" in result.stderr
+    assert "nothing was scanned" in " ".join(result.stderr.split())
 
 
 # ---- real process ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ import errno
 import io
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -16,6 +17,15 @@ from netscope.cli import app
 from netscope.resolver import ResolutionError
 
 runner = CliRunner()
+
+# Typer forces coloured --help when it detects GitHub Actions (GITHUB_ACTIONS=true), and the colour
+# codes split option names like "--yes-authorized"; Rich also wraps at the console width, which
+# varies between machines. Assertions on human-readable text compare it with both removed.
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def plain(text):
+    return " ".join(_ANSI.sub("", text).split())
 
 
 def invoke(*args):
@@ -122,7 +132,7 @@ def test_allowlist_rejection_opens_no_probe_socket(tmp_path, probe_sockets):
     allow.write_text("127.0.0.0/30\n", encoding="utf-8")
     result = invoke("discover", "127.0.0.0/29", "--yes-authorized", "--allowlist", allow)
     assert result.exit_code == 2
-    assert "allowlist" in result.stderr
+    assert "allowlist" in plain(result.stderr)
     assert probe_sockets == []
 
 
@@ -131,7 +141,7 @@ def test_malformed_allowlist_is_usage_error(tmp_path, probe_sockets):
     allow.write_text("127.0.0.1\nbogus\n", encoding="utf-8")
     result = invoke("scan", "127.0.0.1", "--yes-authorized", "--allowlist", allow)
     assert result.exit_code == 2
-    assert ":2:" in result.stderr
+    assert ":2:" in plain(result.stderr)
     assert probe_sockets == []
 
 
@@ -143,18 +153,20 @@ def test_positive_control_probe_socket_is_opened_after_preflight(probe_sockets):
 
 
 def test_error_messages(network):
-    assert "--yes-authorized" in invoke("scan", "127.0.0.1").stderr
-    assert "--allow-public" in invoke("scan", "8.8.8.8", "--yes-authorized").stderr
-    assert "did you mean 10.0.0.0/24" in invoke("discover", "10.0.0.5/24", "--yes-authorized").stderr
-    assert "--ports" in invoke("scan", "127.0.0.1", "-p", "9-1", "--yes-authorized").stderr
-    assert "inverted" in invoke("scan", "127.0.0.1", "-p", "9-1", "--yes-authorized").stderr
+    assert "--yes-authorized" in plain(invoke("scan", "127.0.0.1").stderr)
+    assert "--allow-public" in plain(invoke("scan", "8.8.8.8", "--yes-authorized").stderr)
+    assert "did you mean 10.0.0.0/24" in plain(invoke("discover", "10.0.0.5/24", "--yes-authorized").stderr)
+    assert "--ports" in plain(invoke("scan", "127.0.0.1", "-p", "9-1", "--yes-authorized").stderr)
+    assert "inverted" in plain(invoke("scan", "127.0.0.1", "-p", "9-1", "--yes-authorized").stderr)
 
 
 def test_help_needs_no_acknowledgement():
     for args in (["--help"], ["scan", "--help"], ["discover", "--help"]):
         result = invoke(*args)
         assert result.exit_code == 0
-    assert "--yes-authorized" in invoke("scan", "--help").output
+    # A wide terminal so the help table never folds the option name, whatever the machine's width.
+    wide = runner.invoke(app, ["scan", "--help"], env={"COLUMNS": "200"})
+    assert "--yes-authorized" in plain(wide.output)
 
 
 # ---- machine-readable output ----------------------------------------------------------------
@@ -167,7 +179,7 @@ def test_json_stdout_is_clean_even_when_verbose(network):
     data = json.loads(result.stdout)
     assert "\x1b" not in result.stdout
     assert data["summary"]["open"] == 1 and data["summary"]["closed"] == 2
-    assert "scanning 127.0.0.1" in result.stderr
+    assert "scanning 127.0.0.1" in plain(result.stderr)
 
 
 def test_csv_stdout(network):
@@ -221,7 +233,7 @@ def test_human_output_collapses_many_closed_ports(network):
 def test_max_hosts_raise_is_warned(network):
     result = invoke("discover", "127.0.0.0/23", "--yes-authorized", "--max-hosts", "600", "--json", "--rate", "10000")
     assert result.exit_code == 0
-    assert "host cap raised" in result.stderr
+    assert "host cap raised" in plain(result.stderr)
     assert len(json.loads(result.stdout)["results"]) == 510
 
 
@@ -266,7 +278,7 @@ def test_exit_3_for_fatal_failure(monkeypatch):
     monkeypatch.setattr(probe, "make_tcp_connect", broken)
     result = invoke("scan", "127.0.0.1", "--yes-authorized", "--json")
     assert result.exit_code == 3
-    assert "internal error" in result.stderr
+    assert "internal error" in plain(result.stderr)
     assert result.stdout == ""
 
 
