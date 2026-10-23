@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "netscope"
+dynamic = ["version"]
+description = "Evidence-based IPv4 TCP port scanner and host-discovery tool for authorized networks."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "PranavY-01" }]
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "pydantic>=2.6",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+    "Topic :: System :: Networking :: Monitoring",
+    "Topic :: Security",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+netscope = "netscope.cli:main"
+
+[tool.hatch.version]
+path = "src/netscope/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/netscope"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: opens real sockets on 127.0.0.1",
+]
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]

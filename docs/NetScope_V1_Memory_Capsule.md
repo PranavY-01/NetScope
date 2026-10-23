@@ -650,3 +650,11 @@ Each phase ends with passing tests, an update here, and a commit.
 
 - Decisions recorded in §20. Measurement scripts were throwaway (not committed); the numbers are in §20.3.
 - Environment: no `nmap` installed on the dev machine, so the optional nmap comparison in Phase 8 is not available locally.
+
+### Phase 1 — skeleton (done)
+
+- `pyproject.toml` (hatchling, `src/` layout, version read from `netscope/__init__.py`), console script `netscope = netscope.cli:main`, `python -m netscope`.
+- Minimum versions pinned: Python ≥ 3.11, typer ≥ 0.12, rich ≥ 13.7, pydantic ≥ 2.6; dev extras pytest ≥ 8.0, pytest-asyncio ≥ 0.24 (`asyncio_mode = auto`). Resolves §17 item 12.
+- pytest treats `ResourceWarning` and unraisable-exception warnings as errors, so a leaked socket fails the suite.
+- Verified: fresh `.venv` + `pip install -e ".[dev]"` on Windows (Python 3.12.0; installed typer 0.27.3, rich 15.0.0, pydantic 2.14.1, pytest 9.1.1, pytest-asyncio 1.4.0); `netscope --help` works; 2 smoke tests pass.
+- `.github/workflows/tests.yml` runs the suite on windows-latest and ubuntu-latest × Python 3.11/3.12/3.13. It has not run yet (nothing pushed from this session).
