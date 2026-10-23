@@ -674,3 +674,27 @@ Modules: `models.py`, `config.py`, `guardrails.py`, `output.py`.
 - **CSV** (resolves the column part of §17 item 9): scan = one row per probe, columns `target_input, ip, port, state, elapsed_ms, error_code, error_message, started_at`; each target error adds a row with empty `ip`/`port` and `state=error`. Discovery = one row per probe, columns `target_input, ip, host_state, host_elapsed_ms, host_error_code, host_error_message, port, probe_state, probe_elapsed_ms, probe_error_code, probe_error_message, probe_started_at`. CSV carries no metadata, so interruption is signalled only by the exit code (130) and stderr.
 - `write_atomic`: temp file in the same directory + fsync + `os.replace`; the original survives a failure.
 - Tests: 232 passing on Windows (Python 3.12.0), all with a fixture that fails if any socket is constructed.
+
+### Phase 3 — single probe and classification (done)
+
+Module: `probe.py`.
+
+- `ConnectFn = async (ip: str, port: int) -> None`, injectable. `probe_port` owns the deadline (`asyncio.timeout`) and timing (`time.perf_counter`, monotonic), so injected functions need no timeout logic. Timestamps are UTC; `elapsed_ms` is rounded to 3 decimals.
+- Default connect (`make_tcp_connect`): non-blocking AF_INET socket + `loop.sock_connect`, closed in `finally`. On Windows it applies `SIO_TCP_INITIAL_RTO` (no SYN retransmissions) via `ctypes`/`WSAIoctl`. `fast_refusal_active()` checks once whether the ioctl works and logs a warning if not.
+- **Classification:**
+
+  | Signal | State | `error_code` example |
+  |---|---|---|
+  | connect succeeded | `open` | — |
+  | `ConnectionRefusedError`, `ECONNREFUSED`, `winerror` 10061 or 1225 | `closed` | `winerror:1225` |
+  | NetScope deadline expired | `inconclusive` | `timeout` |
+  | OS timeout: `TimeoutError`, `ETIMEDOUT`, `winerror` 10060/121 | `inconclusive` | `errno:ETIMEDOUT` |
+  | host/network unreachable: `EHOSTUNREACH`, `ENETUNREACH`, `winerror` 10051/10065/1231/1232 | `inconclusive` | `errno:EHOSTUNREACH` |
+  | anything else (e.g. `EMFILE`, `EACCES`, `ECONNRESET`, non-OSError exceptions) | `error` | `errno:EMFILE`, `exception:RuntimeError` |
+
+- **Build-time decision:** host/network-unreachable maps to `inconclusive` with its code preserved, not `error`. It is a routing/ARP-level signal about the path, not a local operational failure and not a TCP response. This keeps absent LAN hosts from turning a discovery run into a wall of `error` verdicts. It is never mapped to `filtered`.
+- `error_code` strings are stable across platforms: `winerror:N`, `errno:NAME` (portable name preferred, e.g. `ETIMEDOUT` not `WSAETIMEDOUT`), or `exception:ClassName`.
+- `CancelledError` always propagates out of `probe_port`; only `Exception` is caught.
+- Tests: classification table; every `errno` value and a list of Windows codes asserted never to produce `filtered`; mocked deadline timeout → `inconclusive`; real loopback listener → `open`; real unused port → `closed` in < 500 ms; on Windows, the mitigation disabled + 0.5 s timeout → `inconclusive` (documents why the mitigation exists).
+- Manual check (Windows, `-X dev -W error`): three probes to an unused LAN address (192.168.1.250:80) each returned `inconclusive`/`timeout` at ~1,000 ms, with no ResourceWarnings or Proactor cancellation errors.
+- Suite: 373 passed, 1 skipped (the non-Windows-only test) on Windows.
