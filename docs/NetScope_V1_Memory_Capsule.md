@@ -698,3 +698,17 @@ Module: `probe.py`.
 - Tests: classification table; every `errno` value and a list of Windows codes asserted never to produce `filtered`; mocked deadline timeout → `inconclusive`; real loopback listener → `open`; real unused port → `closed` in < 500 ms; on Windows, the mitigation disabled + 0.5 s timeout → `inconclusive` (documents why the mitigation exists).
 - Manual check (Windows, `-X dev -W error`): three probes to an unused LAN address (192.168.1.250:80) each returned `inconclusive`/`timeout` at ~1,000 ms, with no ResourceWarnings or Proactor cancellation errors.
 - Suite: 373 passed, 1 skipped (the non-Windows-only test) on Windows.
+
+### Phase 4 — resolver and orchestration (done)
+
+Modules: `resolver.py`, `rate_limit.py`, `scheduler.py`, `scanner.py`.
+
+- **Resolver seam:** `Resolver = async (host) -> Sequence[str]`. The default `system_resolver` calls `getaddrinfo` with `AF_INET` only. `resolve_ipv4` deduplicates answers in first-seen order and enforces a 10 s DNS deadline. Errors are `ResolutionError(code, message)` with codes `dns:EAI_*`, `dns:ipv6_only` (a second AF_INET6 lookup distinguishes "exists but IPv6-only"), `dns:no_ipv4`, `dns:timeout`, `dns:error`.
+- **Partial resolution** (resolves §17 item 11): non-IPv4 answers are dropped and logged at debug level, and the valid IPv4 answers are scanned. Only "no usable IPv4 at all" becomes a target error.
+- **Rate limiter:** strict spacing of 1/rate between probe starts, with no burst credit after idle. A slot is reserved synchronously, so no lock is needed. One instance is shared by all workers, so the limit is scan-wide. Clock and sleep are injectable.
+- **Scheduler:** `run_bounded` starts exactly `concurrency` worker tasks that pull jobs lazily from one shared iterator, acquire a rate slot, run the probe, and push results to a queue that the generator yields from as each completes. Concurrency is bounded by construction (a fixed worker pool is equivalent to a semaphore with no per-job tasks). Closing the generator cancels and awaits every worker. A worker exception is re-raised in the consumer.
+- **Scanner API:** `prepare_scan(config, resolver)` → `ScanPlan` (resolve, then §7.5 preflight; raises `ScopeError`; no probe sockets). Then `iter_scan(plan, connect, limiter)` yields `PortResult`s, `build_scan_report(plan, results, timer, interrupted)` assembles the report, and `scan_ports(config)` runs all three. Probe order is port-major, so consecutive probes rotate across a hostname's addresses. DNS failure leaves a plan with no IPs and one `TargetError`, still subject to the acknowledgement check.
+- **Engine/caller contract for interruption:** the engine never swallows cancellation. A caller that wants partial results consumes `iter_scan` and builds the report itself with `interrupted=True` (Phase 7 uses this).
+- Tests: multi-IP dedupe and per-IP results, DNS failure → structured error with no fake timeouts, getaddrinfo stubbed (no real DNS) for AF_INET-only/IPv6-only/gaierror mapping, the limiter alone with a fake clock plus one real-time check, an in-flight counter proving `max_in_flight == concurrency` (7) over 100 jobs, task count ≤ workers + 2 across a 254-address run, results yielded in completion order, and early close cancelling outstanding probes.
+- **Done criterion:** a /24 scan (127.0.0.1–127.0.0.254 via an injected resolver, one real listener on 127.0.0.1, real sockets, concurrency 32, rate 2,000/s) completed in 0.13 s with 1 `open`, 253 `closed`, 0 `error`, in-flight ≤ 32 and tasks ≤ 36.
+- Suite: 411 passed, 1 skipped on Windows.

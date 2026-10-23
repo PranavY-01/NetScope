@@ -108,7 +108,9 @@ def parse_network(raw: str) -> IPv4Network:
     return network
 
 
-class _CommonConfig(BaseModel):
+class CommonConfig(BaseModel):
+    """Settings shared by scan and discovery."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     ports: tuple[int, ...] = DEFAULT_PORTS
@@ -133,7 +135,7 @@ class _CommonConfig(BaseModel):
         return _validate_port_values(value)
 
 
-class ScanConfig(_CommonConfig):
+class ScanConfig(CommonConfig):
     """Port scan of one IPv4 literal or hostname (every resolved IPv4 address)."""
 
     target: str
@@ -145,7 +147,7 @@ class ScanConfig(_CommonConfig):
         return value.strip()
 
 
-class DiscoveryConfig(_CommonConfig):
+class DiscoveryConfig(CommonConfig):
     """TCP-connect host discovery across an IPv4 CIDR."""
 
     network: IPv4Network
