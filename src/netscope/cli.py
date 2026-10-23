@@ -3,8 +3,8 @@
 import asyncio
 import logging
 import sys
-from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import aclosing, contextmanager
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -28,12 +28,12 @@ from netscope.config import (
     ScanConfig,
 )
 from netscope.console import render_discovery, render_scan
-from netscope.discovery import DiscoveryPlan, build_discovery_report, iter_discovery, prepare_discovery
+from netscope.discovery import DiscoveryPlan, build_discovery_report, prepare_discovery, run_discovery
 from netscope.guardrails import ScopeError, load_allowlist
 from netscope.logging_config import NORMAL, QUIET, VERBOSE, configure_logging
 from netscope.models import DiscoveryReport, ScanReport
 from netscope.output import render, write_atomic
-from netscope.scanner import ScanPlan, build_scan_report, iter_scan, prepare_scan
+from netscope.scanner import ScanPlan, build_scan_report, prepare_scan, run_scan
 from netscope.scheduler import RunTimer
 
 log = logging.getLogger("netscope.cli")
@@ -112,7 +112,7 @@ class _Job:
 
     noun: str
     prepare: Callable[[], Any]
-    iterate: Callable[[Any], AsyncIterator]
+    run: Callable[[Any, Callable[[Any], None]], Awaitable[None]]
     build: Callable[..., ScanReport | DiscoveryReport]
     total: Callable[[Any], int]
     describe: Callable[[Any], str]
@@ -183,13 +183,6 @@ def _progress(console: Console, total: int, noun: str, enabled: bool) -> Iterato
         yield lambda: progress.advance(task)
 
 
-async def _consume(stream: AsyncIterator, sink: list, advance: Callable[[], None]) -> None:
-    async with aclosing(stream) as results:
-        async for item in results:
-            sink.append(item)
-            advance()
-
-
 def _emit(report: ScanReport | DiscoveryReport, out: _Output) -> None:
     if out.fmt is None:
         console = Console()
@@ -223,8 +216,14 @@ def _execute(job: _Job, out: _Output) -> int:
     timer = RunTimer()
     interrupted = False
     with _progress(_err_console(), total, job.noun, enabled=not out.quiet) as advance:
+
+        def on_result(item: Any) -> None:
+            # Called synchronously as each result completes, so Ctrl-C cannot drop finished work.
+            collected.append(item)
+            advance()
+
         try:
-            asyncio.run(_consume(job.iterate(plan), collected, advance))
+            asyncio.run(job.run(plan, on_result))
         except KeyboardInterrupt:
             interrupted = True
 
@@ -322,7 +321,9 @@ def scan(
         return _Job(
             noun="probes",
             prepare=lambda: prepare_scan(config, resolver=resolver.system_resolver),
-            iterate=lambda plan: iter_scan(plan, connect=probe.make_tcp_connect(config.fast_refusal)),
+            run=lambda plan, on_result: run_scan(
+                plan, on_result=on_result, connect=probe.make_tcp_connect(config.fast_refusal)
+            ),
             build=build_scan_report,
             total=lambda plan: plan.requested_probes,
             describe=describe,
@@ -383,7 +384,9 @@ def discover(
         return _Job(
             noun="hosts",
             prepare=prepare,
-            iterate=lambda plan: iter_discovery(plan, connect=probe.make_tcp_connect(config.fast_refusal)),
+            run=lambda plan, on_result: run_discovery(
+                plan, on_result=on_result, connect=probe.make_tcp_connect(config.fast_refusal)
+            ),
             build=build_discovery_report,
             total=lambda plan: plan.requested_hosts,
             describe=describe,

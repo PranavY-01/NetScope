@@ -2,8 +2,7 @@
 
 import logging
 import sys
-from collections.abc import AsyncIterator, Iterable
-from contextlib import aclosing
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass
 from ipaddress import IPv4Address
 
@@ -14,7 +13,7 @@ from netscope.models import PortResult, RunSettings, ScanMetadata, ScanReport, T
 from netscope.probe import ConnectFn, fast_refusal_active, make_tcp_connect, probe_port
 from netscope.rate_limit import RateLimiter
 from netscope.resolver import ResolutionError, Resolver, resolve_ipv4, system_resolver
-from netscope.scheduler import RunTimer, run_bounded
+from netscope.scheduler import RunTimer, run_bounded, stream_results
 
 log = logging.getLogger(__name__)
 
@@ -56,13 +55,18 @@ async def prepare_scan(config: ScanConfig, *, resolver: Resolver = system_resolv
     return ScanPlan(config=config, ips=tuple(ips), target_errors=tuple(target_errors))
 
 
-async def iter_scan(
+async def run_scan(
     plan: ScanPlan,
     *,
+    on_result: Callable[[PortResult], None],
     connect: ConnectFn | None = None,
     limiter: RateLimiter | None = None,
-) -> AsyncIterator[PortResult]:
-    """Yield port results as probes complete. Callers keep what they receive if cancelled."""
+) -> None:
+    """Probe the plan, calling on_result as each probe completes.
+
+    Every completed result reaches on_result even if the run is cancelled immediately afterwards, so
+    a caller that collects in on_result keeps all completed work on Ctrl-C.
+    """
     config = plan.config
     connect = connect or make_tcp_connect(config.fast_refusal)
     limiter = limiter or RateLimiter(config.rate)
@@ -73,9 +77,17 @@ async def iter_scan(
         ip, port = job
         return await probe_port(config.target, ip, port, timeout=config.timeout, connect=connect)
 
-    async with aclosing(run_bounded(jobs, run, concurrency=config.concurrency, limiter=limiter)) as stream:
-        async for result in stream:
-            yield result
+    await run_bounded(jobs, run, concurrency=config.concurrency, limiter=limiter, on_result=on_result)
+
+
+def iter_scan(
+    plan: ScanPlan,
+    *,
+    connect: ConnectFn | None = None,
+    limiter: RateLimiter | None = None,
+) -> AsyncIterator[PortResult]:
+    """Stream port results as probes complete. Lossy on cancellation; see run_scan."""
+    return stream_results(lambda on_result: run_scan(plan, on_result=on_result, connect=connect, limiter=limiter))
 
 
 def run_settings(config: CommonConfig) -> RunSettings:
@@ -126,8 +138,9 @@ async def scan_ports(
     resolver: Resolver = system_resolver,
     connect: ConnectFn | None = None,
 ) -> ScanReport:
-    """Preflight, scan, and report. For partial results on cancellation, use iter_scan directly."""
+    """Preflight, scan, and report. For partial results on cancellation, use run_scan directly."""
     plan = await prepare_scan(config, resolver=resolver)
     timer = RunTimer()
-    results = [result async for result in iter_scan(plan, connect=connect)]
+    results: list[PortResult] = []
+    await run_scan(plan, on_result=results.append, connect=connect)
     return build_scan_report(plan, results, timer=timer, interrupted=False)

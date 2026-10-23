@@ -2,8 +2,7 @@
 
 import sys
 import time
-from collections.abc import AsyncIterator, Iterable, Sequence
-from contextlib import aclosing
+from collections.abc import AsyncIterator, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from ipaddress import IPv4Address
 
@@ -22,7 +21,7 @@ from netscope.models import (
 from netscope.probe import ConnectFn, make_tcp_connect, probe_port
 from netscope.rate_limit import RateLimiter
 from netscope.scanner import run_settings
-from netscope.scheduler import RunTimer, run_bounded
+from netscope.scheduler import RunTimer, run_bounded, stream_results
 
 _TCP_RESPONSE = frozenset({PortState.OPEN, PortState.CLOSED})
 
@@ -91,15 +90,17 @@ def _host_result(
     )
 
 
-async def iter_discovery(
+async def run_discovery(
     plan: DiscoveryPlan,
     *,
+    on_result: Callable[[HostResult], None],
     connect: ConnectFn | None = None,
     limiter: RateLimiter | None = None,
-) -> AsyncIterator[HostResult]:
-    """Yield each host's verdict once all of its probes have completed.
+) -> None:
+    """Probe the plan, calling on_result with each host's verdict once all its probes have completed.
 
-    A host whose probes were cut short by cancellation is not reported: its verdict was never reached.
+    Verdicts are delivered synchronously as the last probe finishes, so none is lost to cancellation.
+    A host whose probes were cut short is not reported: its verdict was never reached.
     """
     config = plan.config
     target_input = str(config.network)
@@ -117,14 +118,27 @@ async def iter_discovery(
         first_probe_start.setdefault(ip, time.perf_counter())
         return await probe_port(target_input, ip, port, timeout=config.timeout, connect=connect)
 
-    async with aclosing(run_bounded(jobs, run, concurrency=config.concurrency, limiter=limiter)) as stream:
-        async for result in stream:
-            collected = pending.setdefault(result.ip, [])
-            collected.append(result)
-            if len(collected) == len(ports):
-                del pending[result.ip]
-                elapsed_ms = round((time.perf_counter() - first_probe_start.pop(result.ip)) * 1000, 3)
-                yield _host_result(target_input, result.ip, ports, collected, elapsed_ms)
+    def on_probe(result: PortResult) -> None:
+        collected = pending.setdefault(result.ip, [])
+        collected.append(result)
+        if len(collected) == len(ports):
+            del pending[result.ip]
+            elapsed_ms = round((time.perf_counter() - first_probe_start.pop(result.ip)) * 1000, 3)
+            on_result(_host_result(target_input, result.ip, ports, collected, elapsed_ms))
+
+    await run_bounded(jobs, run, concurrency=config.concurrency, limiter=limiter, on_result=on_probe)
+
+
+def iter_discovery(
+    plan: DiscoveryPlan,
+    *,
+    connect: ConnectFn | None = None,
+    limiter: RateLimiter | None = None,
+) -> AsyncIterator[HostResult]:
+    """Stream host verdicts as they are reached. Lossy on cancellation; see run_discovery."""
+    return stream_results(
+        lambda on_result: run_discovery(plan, on_result=on_result, connect=connect, limiter=limiter)
+    )
 
 
 def build_discovery_report(
@@ -157,8 +171,9 @@ def build_discovery_report(
 
 
 async def discover_hosts(config: DiscoveryConfig, *, connect: ConnectFn | None = None) -> DiscoveryReport:
-    """Preflight, discover, and report. For partial results on cancellation, use iter_discovery directly."""
+    """Preflight, discover, and report. For partial results on cancellation, use run_discovery directly."""
     plan = prepare_discovery(config)
     timer = RunTimer()
-    hosts = [host async for host in iter_discovery(plan, connect=connect)]
+    hosts: list[HostResult] = []
+    await run_discovery(plan, on_result=hosts.append, connect=connect)
     return build_discovery_report(plan, hosts, timer=timer, interrupted=False)

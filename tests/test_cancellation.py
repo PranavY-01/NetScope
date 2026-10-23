@@ -11,16 +11,14 @@ import socket
 import subprocess
 import sys
 import textwrap
-from contextlib import aclosing
-
 import pytest
 from typer.testing import CliRunner
 
 from netscope import probe
 from netscope.cli import app
 from netscope.config import DiscoveryConfig, ScanConfig
-from netscope.discovery import build_discovery_report, iter_discovery, prepare_discovery
-from netscope.scanner import build_scan_report, iter_scan, prepare_scan
+from netscope.discovery import build_discovery_report, prepare_discovery, run_discovery
+from netscope.scanner import build_scan_report, prepare_scan, run_scan
 from netscope.scheduler import RunTimer
 
 runner = CliRunner()
@@ -59,14 +57,8 @@ async def test_cancelling_a_scan_keeps_completed_results_and_cleans_up():
     plan = await prepare_scan(ScanConfig(target="127.0.0.1", ports="1-200", concurrency=20, rate=10_000, authorized=True))
     net = SocketTrackingNetwork()
     collected = []
-
-    async def consume():
-        async with aclosing(iter_scan(plan, connect=net)) as stream:
-            async for result in stream:
-                collected.append(result)
-
     timer = RunTimer()
-    task = asyncio.create_task(consume())
+    task = asyncio.create_task(run_scan(plan, on_result=collected.append, connect=net))
     while len(collected) < 5:
         await asyncio.sleep(0.01)
     task.cancel()
@@ -95,13 +87,7 @@ async def test_cancelling_discovery_reports_only_hosts_with_a_verdict():
         await net(ip, 1)  # pending until cancelled
 
     collected = []
-
-    async def consume():
-        async with aclosing(iter_discovery(plan, connect=connect)) as stream:
-            async for host in stream:
-                collected.append(host)
-
-    task = asyncio.create_task(consume())
+    task = asyncio.create_task(run_discovery(plan, on_result=collected.append, connect=connect))
     while len(collected) < 2:
         await asyncio.sleep(0.01)
     await asyncio.sleep(0.05)
@@ -113,6 +99,32 @@ async def test_cancelling_discovery_reports_only_hosts_with_a_verdict():
     assert _netscope_tasks() == []
     report = build_discovery_report(plan, collected, timer=RunTimer(), interrupted=True)
     assert (report.metadata.completed_hosts, report.metadata.requested_hosts) == (2, 14)
+
+
+@pytest.mark.parametrize("n", [1, 5, 17])
+async def test_result_completed_just_before_cancellation_is_kept(n):
+    """Regression: a probe that finished right before Ctrl-C used to be lost in a queue handoff.
+
+    The run task is cancelled synchronously from inside probe n+1, before the event loop can
+    schedule anything else, which is the tightest possible race.
+    """
+    plan = await prepare_scan(ScanConfig(target="127.0.0.1", ports="1-100", concurrency=1, rate=10_000, authorized=True))
+    collected = []
+    calls = 0
+
+    async def connect(ip, port):
+        nonlocal calls
+        calls += 1
+        if calls == n + 1:
+            run_task.cancel()
+            await asyncio.sleep(30)
+        raise ConnectionRefusedError(errno.ECONNREFUSED, "refused")
+
+    run_task = asyncio.create_task(run_scan(plan, on_result=collected.append, connect=connect))
+    with pytest.raises(asyncio.CancelledError):
+        await run_task
+    assert [r.port for r in collected] == list(range(1, n + 1))
+    assert _netscope_tasks() == []
 
 
 # ---- CLI: a real SIGINT delivered through Python's signal machinery --------------------------

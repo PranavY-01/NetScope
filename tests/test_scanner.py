@@ -13,7 +13,11 @@ from netscope.probe import make_tcp_connect
 from netscope.rate_limit import RateLimiter
 from netscope.resolver import ResolutionError
 from netscope.scanner import build_scan_report, iter_scan, prepare_scan, scan_ports
-from netscope.scheduler import RunTimer, run_bounded
+from netscope.scheduler import RunTimer, run_bounded, stream_results
+
+# A start may precede its rate slot by up to two ticks of the loop clock (see RateLimiter):
+# ~31 ms on Windows with Python 3.11/3.12, negligible elsewhere.
+EARLY_WAKE = 2 * time.get_clock_info("monotonic").resolution + 0.002
 
 
 def config(target="127.0.0.1", **overrides):
@@ -145,7 +149,8 @@ async def test_start_rate_is_limited_independently_of_concurrency():
     start = time.perf_counter()
     [r async for r in iter_scan(plan, connect=net)]
     starts = sorted(t for _, _, t in net.calls)
-    assert starts[-1] - starts[0] >= 40 / 200 * 0.9
+    # Slots are absolute, so only the last start's early wake-up can shorten the span.
+    assert starts[-1] - starts[0] >= 40 / 200 - EARLY_WAKE
     assert time.perf_counter() - start < 5
 
 
@@ -179,7 +184,26 @@ async def test_worker_failure_surfaces():
         raise RuntimeError("bug in fn")
 
     with pytest.raises(RuntimeError, match="bug in fn"):
-        [r async for r in run_bounded([1, 2, 3], boom, concurrency=2, limiter=RateLimiter(1000))]
+        await run_bounded([1, 2, 3], boom, concurrency=2, limiter=RateLimiter(1000), on_result=print)
+    assert _live_workers() == []
+
+    with pytest.raises(RuntimeError, match="bug in fn"):
+        [r async for r in stream_results(lambda cb: run_bounded([1], boom, concurrency=1, limiter=RateLimiter(1000), on_result=cb))]
+
+
+def _live_workers():
+    return [t for t in asyncio.all_tasks() if t.get_name().startswith("netscope-") and not t.done()]
+
+
+async def test_run_bounded_delivers_every_result_via_callback():
+    async def double(job):
+        await asyncio.sleep(0)
+        return job * 2
+
+    got = []
+    await run_bounded(range(50), double, concurrency=8, limiter=RateLimiter(10_000), on_result=got.append)
+    assert sorted(got) == [i * 2 for i in range(50)]
+    assert _live_workers() == []
 
 
 async def test_scan_ports_report():
