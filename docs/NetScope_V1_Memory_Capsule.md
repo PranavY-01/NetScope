@@ -712,3 +712,21 @@ Modules: `resolver.py`, `rate_limit.py`, `scheduler.py`, `scanner.py`.
 - Tests: multi-IP dedupe and per-IP results, DNS failure → structured error with no fake timeouts, getaddrinfo stubbed (no real DNS) for AF_INET-only/IPv6-only/gaierror mapping, the limiter alone with a fake clock plus one real-time check, an in-flight counter proving `max_in_flight == concurrency` (7) over 100 jobs, task count ≤ workers + 2 across a 254-address run, results yielded in completion order, and early close cancelling outstanding probes.
 - **Done criterion:** a /24 scan (127.0.0.1–127.0.0.254 via an injected resolver, one real listener on 127.0.0.1, real sockets, concurrency 32, rate 2,000/s) completed in 0.13 s with 1 `open`, 253 `closed`, 0 `error`, in-flight ≤ 32 and tasks ≤ 36.
 - Suite: 411 passed, 1 skipped on Windows.
+
+### Phase 5 — CIDR discovery (done)
+
+Module: `discovery.py`.
+
+- `prepare_discovery(config)` → `DiscoveryPlan`: cap checked from the CIDR size before expansion, then `.hosts()` expansion, then policy → allowlist → acknowledgement. Synchronous (no DNS in discovery).
+- `iter_discovery` probes in host-major order through the same `run_bounded` pool and scan-wide limiter, accumulates per-host results, and yields a `HostResult` as soon as all of that host's probes complete. Evidence is ordered by configured port; `probed_ports` lists every configured port; `elapsed_ms` runs from the host's first probe dispatch to its verdict.
+- **Verdict rule** (`host_verdict`, pure). Applied in order:
+  1. Any `open` or `closed` probe → `responsive`.
+  2. Otherwise any `error` probe → `error`, with that probe's code and a message explaining that `no_response` cannot be asserted.
+  3. Otherwise → `no_response`.
+
+  The mixed timeout-plus-error case is therefore `error`. Unreachable signals are `inconclusive` (Phase 3) and so count toward `no_response`.
+- All configured ports are probed even after a positive response, so the evidence is complete. With the default 3 ports this costs little.
+- **Interruption semantics:** a host whose probes did not all complete gets no verdict and is not reported. `completed_hosts < requested_hosts` shows the gap.
+- `discover_hosts(config)` runs prepare, iterate, and report together. `target_input` for each host is the CIDR string.
+- Tests: an 11-row verdict table (including mixed timeout+error, error+open, and a hypothetical `filtered`), cap/policy/allowlist/ack rejections, a scripted 6-host network covering every verdict with evidence checks, timeout-only → `no_response` with no `filtered`, progressive yielding, /24 × 3 ports bounded at concurrency 20 (≤ 22 tasks), and a real loopback /29 where refusals on 127.0.0.2–.6 count as `responsive`.
+- Suite: 438 passed, 1 skipped on Windows.
