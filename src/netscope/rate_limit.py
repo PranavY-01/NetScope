@@ -6,16 +6,22 @@ from collections.abc import Awaitable, Callable
 
 
 class RateLimiter:
-    """Spaces successive acquisitions at least 1/rate seconds apart, with no burst allowance.
+    """Assigns acquisitions slots 1/rate seconds apart, with no burst allowance.
 
     One instance is shared by every worker in a run, so the limit is scan-wide rather than per host.
+    Slots are absolute, so the long-run rate is exact. An individual start can precede its slot by up
+    to two ticks of the event loop's clock: the loop computes the deadline from its own clock and may
+    fire a timer up to one tick early. On Windows with Python 3.11/3.12 that clock is GetTickCount64
+    (15.6 ms ticks, so up to ~31 ms); elsewhere, and from Python 3.13 on Windows, it is sub-millisecond.
+    Waiting out the remainder exactly would mean busy-spinning.
     """
 
     def __init__(
         self,
         rate: float,
         *,
-        clock: Callable[[], float] = time.monotonic,
+        # perf_counter is monotonic; time.monotonic ticks every 15.6 ms on Windows, too coarse for 20 ms slots.
+        clock: Callable[[], float] = time.perf_counter,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         if not rate > 0:

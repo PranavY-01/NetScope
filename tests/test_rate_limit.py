@@ -57,8 +57,22 @@ def test_rate_must_be_positive(rate):
         RateLimiter(rate)
 
 
+# A start may precede its slot by up to two ticks of the loop clock (see RateLimiter): ~31 ms on
+# Windows with Python 3.11/3.12, negligible elsewhere. Slots are absolute, so it never accumulates.
+EARLY_WAKE = 2 * time.get_clock_info("monotonic").resolution + 0.002
+
+
 async def test_real_time_rate_is_respected():
     limiter = RateLimiter(200)
     start = time.perf_counter()
     await asyncio.gather(*(limiter.acquire() for _ in range(21)))
-    assert time.perf_counter() - start >= 20 / 200 * 0.9
+    assert time.perf_counter() - start >= 20 / 200 - EARLY_WAKE
+
+
+async def test_long_run_rate_is_exact():
+    """Early wake-ups never accumulate: 101 sequential starts at 500/s span at least 200 ms minus the bound."""
+    limiter = RateLimiter(500)
+    start = time.perf_counter()
+    for _ in range(101):
+        await limiter.acquire()
+    assert time.perf_counter() - start >= 100 / 500 - EARLY_WAKE
