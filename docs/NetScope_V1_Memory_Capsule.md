@@ -756,3 +756,24 @@ Modules: `cli.py` (Typer wiring), `console.py` (Rich rendering, CLI-only), `logg
   - A real subprocess with `FORCE_COLOR=1` and `-v` produces clean JSON on stdout.
 - Suite: 479 passed, 1 skipped on Windows.
 - Typer 0.27 vendors Click (`typer._click`), so there is no separate `click` dependency. Only the latest dependency versions were exercised; the lower bounds in `pyproject.toml` are untested.
+
+### Phase 7 — cancellation (done)
+
+- **Mechanism:**
+  1. Ctrl-C reaches `asyncio.run`'s SIGINT handler (Python ≥ 3.11 `asyncio.Runner`), which cancels the main task.
+  2. `_consume`'s `aclosing` closes the result stream.
+  3. `run_bounded`'s `finally` cancels and **awaits** every worker, and each probe's `finally` closes its socket.
+  4. `asyncio.run` raises `KeyboardInterrupt`, which the CLI catches.
+  5. The CLI builds the report from the results already collected with `interrupted=true`, emits it in the selected format (stdout or atomic file), logs a warning with completed/requested counts, and exits `130`.
+
+  A second Ctrl-C during cleanup falls back to Python's default behaviour.
+- **Policy for in-flight probes:** cancelled immediately, never reported. No result is invented for a probe or a host verdict that did not complete. A discovery host with incomplete probes gets no verdict even if a probe had already shown a refusal.
+- Ctrl-C during preflight (e.g. a slow DNS lookup) exits `130` with "nothing was scanned" and emits no report.
+- CSV has no metadata row, so interruption in CSV is signalled by exit code 130 and the stderr warning.
+- **Tests:**
+  - Engine: cancelling a scan or discovery consumer leaves 0 open sockets (a real socket per probe, counted) and no live `netscope-worker` tasks, and keeps only completed results.
+  - CLI in-process: `signal.raise_signal(SIGINT)` on the Nth probe → exit 130 with valid partial JSON or CSV (5 of 100), and an atomically written partial file; discovery reports only the host that reached a verdict.
+  - Real subprocess: a timer raises SIGINT after 1.5 s at 5 probes/s → exit 130 with valid JSON/CSV and no traceback.
+  - `ResourceWarning` is an error suite-wide, so a leaked socket would fail the suite.
+- **Manual Windows verification:** `tools/windows_console_ctrl_c.py` starts `netscope.exe` (the pip console-script launcher) in its own console and delivers a genuine `CTRL_C_EVENT` via `AttachConsole` + `GenerateConsoleCtrlEvent`. All four combinations passed: JSON/CSV to stdout and JSON/CSV to `-o` file each exited 130 with parseable partial output (7–10 of 200 probes). This is the OS event a keypress produces, triggered programmatically; the user has not yet pressed Ctrl-C by hand.
+- Suite: 488 passed, 1 skipped on Windows.
