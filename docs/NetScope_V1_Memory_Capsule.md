@@ -658,3 +658,19 @@ Each phase ends with passing tests, an update here, and a commit.
 - pytest treats `ResourceWarning` and unraisable-exception warnings as errors, so a leaked socket fails the suite.
 - Verified: fresh `.venv` + `pip install -e ".[dev]"` on Windows (Python 3.12.0; installed typer 0.27.3, rich 15.0.0, pydantic 2.14.1, pytest 9.1.1, pytest-asyncio 1.4.0); `netscope --help` works; 2 smoke tests pass.
 - `.github/workflows/tests.yml` runs the suite on windows-latest and ubuntu-latest × Python 3.11/3.12/3.13. It has not run yet (nothing pushed from this session).
+
+### Phase 2 — pure logic, no sockets (done)
+
+Modules: `models.py`, `config.py`, `guardrails.py`, `output.py`.
+
+- **Port parser** (`parse_ports`): ASCII digits only (`[0-9]{1,5}`), 1–65535, `a-b` inclusive ranges, whitespace tolerated, result sorted and deduplicated. Empty elements, inverted/malformed ranges, signs, hex, decimals and non-ASCII digits are rejected.
+- **Scan target** (`parse_scan_target`): IPv4 literal or hostname. Rejects CIDR (points to `discover`), IPv6 literals, `host:port`, and digits-and-dots strings that are not a valid dotted quad (the OS resolver would otherwise turn `10.1` into 10.0.0.1).
+- **Discovery network** (`parse_network`): strict CIDR; a bare IPv4 becomes /32; host bits set is rejected with a "did you mean" suggestion rather than silently corrected.
+- **Config models**: `ScanConfig` / `DiscoveryConfig` (frozen, `extra="forbid"`). Bounds: timeout (0, 60] s, concurrency 1–1000, rate (0, 10,000] starts/s, max_hosts 1–65,536.
+- **Guardrails**: the §20.2 table, `count_hosts` (no enumeration, so a /8 is rejected without materialising it), `expand_hosts`, allowlist parser (inline `#` comments allowed, line-numbered errors, an allowlist with no entries is an error), and `preflight_addresses` applying §7.5 steps 3–6 in order: cap → address policy (special before public) → allowlist → acknowledgement. `ScopeError.code` is one of `host_cap`, `special_address`, `public_target`, `allowlist`, `not_authorized`.
+- **Finding:** `ipaddress.is_global` is `True` for multicast (224.0.0.0/4), 192.0.0.8 and 192.88.99.0/24. Relying on it would have made multicast "public, allowed with `--allow-public`". The explicit table is stricter, and a test documents each divergence.
+- **Report envelope** (resolves §17 item 8): `metadata` has `tool`, `version`, `schema_version` ("1"), `command`, `target_input`, `settings` (timeout, concurrency, rate, max_hosts, allow_public, allowlist entry count, fast-refusal requested/active), `platform`, `started_at`/`finished_at` (UTC ISO 8601), `duration_ms`, `interrupted`, and requested/completed counts (probes for scan, hosts for discover). Reports include a computed `summary` with a count for every state.
+- **DNS failures** are `target_errors` entries (`target_input`, `error_code`, `error_message`), not port results.
+- **CSV** (resolves the column part of §17 item 9): scan = one row per probe, columns `target_input, ip, port, state, elapsed_ms, error_code, error_message, started_at`; each target error adds a row with empty `ip`/`port` and `state=error`. Discovery = one row per probe, columns `target_input, ip, host_state, host_elapsed_ms, host_error_code, host_error_message, port, probe_state, probe_elapsed_ms, probe_error_code, probe_error_message, probe_started_at`. CSV carries no metadata, so interruption is signalled only by the exit code (130) and stderr.
+- `write_atomic`: temp file in the same directory + fsync + `os.replace`; the original survives a failure.
+- Tests: 232 passing on Windows (Python 3.12.0), all with a fixture that fails if any socket is constructed.
