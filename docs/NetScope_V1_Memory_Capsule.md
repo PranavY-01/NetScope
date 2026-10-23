@@ -718,7 +718,7 @@ Modules: `resolver.py`, `rate_limit.py`, `scheduler.py`, `scanner.py`.
 Module: `discovery.py`.
 
 - `prepare_discovery(config)` → `DiscoveryPlan`: cap checked from the CIDR size before expansion, then `.hosts()` expansion, then policy → allowlist → acknowledgement. Synchronous (no DNS in discovery).
-- `iter_discovery` probes in host-major order through the same `run_bounded` pool and scan-wide limiter, accumulates per-host results, and yields a `HostResult` as soon as all of that host's probes complete. Evidence is ordered by configured port; `probed_ports` lists every configured port; `elapsed_ms` runs from the host's first probe dispatch to its verdict.
+- `iter_discovery` probes in host-major order through the same `run_bounded` pool and scan-wide limiter, accumulates per-host results, and yields a `HostResult` as soon as all of that host's probes complete. Evidence is ordered by configured port; `probed_ports` lists every configured port; `elapsed_ms` runs from the host's first probe start (after its rate-limit slot) to its verdict. **[Corrected in Phase 6: originally measured from job dispatch, which wrongly included time queued behind the rate limiter.]**
 - **Verdict rule** (`host_verdict`, pure). Applied in order:
   1. Any `open` or `closed` probe → `responsive`.
   2. Otherwise any `error` probe → `error`, with that probe's code and a message explaining that `no_response` cannot be asserted.
@@ -730,3 +730,29 @@ Module: `discovery.py`.
 - `discover_hosts(config)` runs prepare, iterate, and report together. `target_input` for each host is the CIDR string.
 - Tests: an 11-row verdict table (including mixed timeout+error, error+open, and a hypothetical `filtered`), cap/policy/allowlist/ack rejections, a scripted 6-host network covering every verdict with evidence checks, timeout-only → `no_response` with no `filtered`, progressive yielding, /24 × 3 ports bounded at concurrency 20 (≤ 22 tasks), and a real loopback /29 where refusals on 127.0.0.2–.6 count as `responsive`.
 - Suite: 438 passed, 1 skipped on Windows.
+
+### Phase 6 — CLI layer (done)
+
+Modules: `cli.py` (Typer wiring), `console.py` (Rich rendering, CLI-only), `logging_config.py`.
+
+- **Commands:** `netscope scan TARGET [-p PORTS]` and `netscope discover NETWORK [-p/--discovery-ports PORTS]`. Shared options: `-t/--timeout`, `-c/--concurrency`, `-r/--rate`, `--max-hosts`, `--allow-public`, `--allowlist FILE`, `--yes-authorized`, `-f/--format json|csv`, `--json`, `--csv`, `-o/--output FILE`, `-v/--verbose`, `-q/--quiet`. Defaults appear in `--help`. Both commands share one execution path (`_Job`), so validation is not duplicated.
+- **Preflight order in the CLI:**
+  1. Output and verbosity flags (Typer usage error).
+  2. Pydantic config, including port spec and target syntax, plus the allowlist file parse.
+  3. `prepare_scan`/`prepare_discovery`: DNS, cap, address policy, allowlist, acknowledgement.
+  4. Only then does `probe.make_tcp_connect` run.
+
+  Any failure in steps 1–3 exits `2` with a one-line `error: … [code]` on stderr.
+- **Output destinations** (resolves the rest of §17 item 9). No format → Rich table on stdout. A format without `-o` → JSON/CSV on stdout. With `-o FILE` the report is written atomically and stdout is left empty. `-o` without a format infers it from a `.json`/`.csv` suffix, otherwise exit 2. `--json --csv` or `--format csv --json` → exit 2; repeating the same format is accepted. `--verbose --quiet` → exit 2.
+- **Streams:** logs and the progress bar go to stderr only, through `RichHandler` with `markup=False`. The progress bar shows only when stderr is a terminal and not `--quiet`. JSON/CSV goes to stdout via `sys.stdout.write` and never passes through Rich.
+- **Verbosity:** default INFO (one "scanning …"/"discovering …" line plus warnings), `-v` DEBUG, `-q` WARNING.
+- **Human output:** tables of IP/port/state/ms/detail. If more than 25 rows are `closed` (scan) or `no_response` (discover), those rows are collapsed into a count line pointing to `--format json|csv`. Discovery output always ends with "no_response means no TCP answer on the probed ports, not that the host is down." All values are rendered as `Text`, so hostnames and messages cannot inject markup.
+- **Exit codes:** implemented per §20.5. Any uncaught exception after config validation → `3`, with `internal error: …` on stderr (traceback only with `-v`).
+- `--max-hosts` above 256 logs a warning.
+- **Test seams:** the CLI looks up `netscope.resolver.system_resolver` and `netscope.probe.make_tcp_connect` at call time, so tests substitute them without touching `asyncio` globals.
+- **Done criteria verified:**
+  - 19 rejection cases plus allowlist cases exit 2 while a spy on the probe module's `socket` records zero sockets; a positive control shows the spy does see probe sockets.
+  - `--json -v` stdout parses as JSON with no `\x1b`, and the log line appears on stderr.
+  - A real subprocess with `FORCE_COLOR=1` and `-v` produces clean JSON on stdout.
+- Suite: 479 passed, 1 skipped on Windows.
+- Typer 0.27 vendors Click (`typer._click`), so there is no separate `click` dependency. Only the latest dependency versions were exercised; the lower bounds in `pyproject.toml` are untested.

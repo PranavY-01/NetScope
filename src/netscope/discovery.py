@@ -2,7 +2,7 @@
 
 import sys
 import time
-from collections.abc import AsyncIterator, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
 from ipaddress import IPv4Address
@@ -106,27 +106,24 @@ async def iter_discovery(
     ports = config.ports
     connect = connect or make_tcp_connect(config.fast_refusal)
     limiter = limiter or RateLimiter(config.rate)
-    first_dispatch: dict[IPv4Address, float] = {}
+    first_probe_start: dict[IPv4Address, float] = {}
     pending: dict[IPv4Address, list[PortResult]] = {}
-
-    def jobs() -> Iterator[tuple[IPv4Address, int]]:
-        # Host-major order, so verdicts become available progressively.
-        for ip in plan.hosts:
-            first_dispatch[ip] = time.perf_counter()
-            for port in ports:
-                yield ip, port
+    # Host-major order, so verdicts become available progressively.
+    jobs = ((ip, port) for ip in plan.hosts for port in ports)
 
     async def run(job: tuple[IPv4Address, int]) -> PortResult:
         ip, port = job
+        # Runs after the rate-limit slot, so host timing excludes time spent queued.
+        first_probe_start.setdefault(ip, time.perf_counter())
         return await probe_port(target_input, ip, port, timeout=config.timeout, connect=connect)
 
-    async with aclosing(run_bounded(jobs(), run, concurrency=config.concurrency, limiter=limiter)) as stream:
+    async with aclosing(run_bounded(jobs, run, concurrency=config.concurrency, limiter=limiter)) as stream:
         async for result in stream:
             collected = pending.setdefault(result.ip, [])
             collected.append(result)
             if len(collected) == len(ports):
                 del pending[result.ip]
-                elapsed_ms = round((time.perf_counter() - first_dispatch.pop(result.ip)) * 1000, 3)
+                elapsed_ms = round((time.perf_counter() - first_probe_start.pop(result.ip)) * 1000, 3)
                 yield _host_result(target_input, result.ip, ports, collected, elapsed_ms)
 
 
