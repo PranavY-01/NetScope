@@ -77,9 +77,11 @@ def test_address_policy(addr, _cls, allowed_default, allowed_with_override):
                 check_address_policy([ip], allow_public=allow_public)
 
 
-# Where ipaddress.is_global says True but our policy is deliberately stricter. Relying on
-# is_global alone would have let these through with --allow-public (capsule §7.2 warning).
-STDLIB_IS_GLOBAL_BUT_SPECIAL = {"224.0.0.1", "239.255.255.250", "192.0.0.8", "192.88.99.1"}
+# Special addresses for which ipaddress.is_global has returned True on some Python versions, while our
+# policy always rejects them. Relying on is_global alone would have let them through with
+# --allow-public (capsule §7.2 warning). The stdlib answer is version-dependent: CVE-2024-4032 fixes
+# (e.g. Python 3.12.4) changed 192.0.0.0/24, so no assertion is made about the stdlib for these.
+STDLIB_IS_GLOBAL_VARIES_OR_DIFFERS = {"224.0.0.1", "239.255.255.250", "192.0.0.8", "192.88.99.1"}
 
 
 @pytest.mark.parametrize(("addr", "cls", "_a", "_b"), POLICY_TABLE)
@@ -88,9 +90,7 @@ def test_table_vs_stdlib_is_global(addr, cls, _a, _b):
     if cls is A.PUBLIC:
         # Never classify a stdlib-non-global address as merely 'public'.
         assert ip.is_global
-    elif addr in STDLIB_IS_GLOBAL_BUT_SPECIAL:
-        assert ip.is_global
-    else:
+    elif addr not in STDLIB_IS_GLOBAL_VARIES_OR_DIFFERS:
         assert not ip.is_global
 
 
