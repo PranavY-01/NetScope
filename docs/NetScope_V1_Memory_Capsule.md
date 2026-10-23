@@ -646,6 +646,8 @@ Default **256**, counting **probe-target hosts**: for a CIDR, Python `ipaddress`
 
 Each phase ends with passing tests, an update here, and a commit.
 
+**Status at end of Phase 8:** V1 feature-complete on Windows. 494 tests pass, 1 skipped (non-Windows-only). The CI matrix (Linux + Windows, Python 3.11–3.13) exists but has never run, because nothing has been pushed. Version is still `1.0.0.dev0`; tagging a release is the user's call. No LICENSE file has been chosen yet.
+
 ### Phase 0 — spec freeze and Windows measurement (done)
 
 - Decisions recorded in §20. Measurement scripts were throwaway (not committed); the numbers are in §20.3.
@@ -706,7 +708,7 @@ Modules: `resolver.py`, `rate_limit.py`, `scheduler.py`, `scanner.py`.
 - **Resolver seam:** `Resolver = async (host) -> Sequence[str]`. The default `system_resolver` calls `getaddrinfo` with `AF_INET` only. `resolve_ipv4` deduplicates answers in first-seen order and enforces a 10 s DNS deadline. Errors are `ResolutionError(code, message)` with codes `dns:EAI_*`, `dns:ipv6_only` (a second AF_INET6 lookup distinguishes "exists but IPv6-only"), `dns:no_ipv4`, `dns:timeout`, `dns:error`.
 - **Partial resolution** (resolves §17 item 11): non-IPv4 answers are dropped and logged at debug level, and the valid IPv4 answers are scanned. Only "no usable IPv4 at all" becomes a target error.
 - **Rate limiter:** strict spacing of 1/rate between probe starts, with no burst credit after idle. A slot is reserved synchronously, so no lock is needed. One instance is shared by all workers, so the limit is scan-wide. Clock and sleep are injectable.
-- **Scheduler:** `run_bounded` starts exactly `concurrency` worker tasks that pull jobs lazily from one shared iterator, acquire a rate slot, run the probe, and push results to a queue that the generator yields from as each completes. Concurrency is bounded by construction (a fixed worker pool is equivalent to a semaphore with no per-job tasks). Closing the generator cancels and awaits every worker. A worker exception is re-raised in the consumer.
+- **Scheduler:** `run_bounded` starts exactly `concurrency` worker tasks that pull jobs lazily from one shared iterator, acquire a rate slot, run the probe, and push results to a queue that the generator yields from as each completes. **[Superseded in Phase 8 — see "Post-Phase-8 fixes": `run_bounded` is now a coroutine with a synchronous `on_result` callback; the queue/generator form lost results on cancellation.]** Concurrency is bounded by construction (a fixed worker pool is equivalent to a semaphore with no per-job tasks). Closing the generator cancels and awaits every worker. A worker exception is re-raised in the consumer.
 - **Scanner API:** `prepare_scan(config, resolver)` → `ScanPlan` (resolve, then §7.5 preflight; raises `ScopeError`; no probe sockets). Then `iter_scan(plan, connect, limiter)` yields `PortResult`s, `build_scan_report(plan, results, timer, interrupted)` assembles the report, and `scan_ports(config)` runs all three. Probe order is port-major, so consecutive probes rotate across a hostname's addresses. DNS failure leaves a plan with no IPs and one `TargetError`, still subject to the acknowledgement check.
 - **Engine/caller contract for interruption:** the engine never swallows cancellation. A caller that wants partial results consumes `iter_scan` and builds the report itself with `interrupted=True` (Phase 7 uses this).
 - Tests: multi-IP dedupe and per-IP results, DNS failure → structured error with no fake timeouts, getaddrinfo stubbed (no real DNS) for AF_INET-only/IPv6-only/gaierror mapping, the limiter alone with a fake clock plus one real-time check, an in-flight counter proving `max_in_flight == concurrency` (7) over 100 jobs, task count ≤ workers + 2 across a 254-address run, results yielded in completion order, and early close cancelling outstanding probes.
@@ -761,7 +763,7 @@ Modules: `cli.py` (Typer wiring), `console.py` (Rich rendering, CLI-only), `logg
 
 - **Mechanism:**
   1. Ctrl-C reaches `asyncio.run`'s SIGINT handler (Python ≥ 3.11 `asyncio.Runner`), which cancels the main task.
-  2. `_consume`'s `aclosing` closes the result stream.
+  2. `_consume`'s `aclosing` closes the result stream. **[Superseded in Phase 8: the CLI now collects through `run_scan`/`run_discovery`'s synchronous `on_result` callback; see "Post-Phase-8 fixes".]**
   3. `run_bounded`'s `finally` cancels and **awaits** every worker, and each probe's `finally` closes its socket.
   4. `asyncio.run` raises `KeyboardInterrupt`, which the CLI catches.
   5. The CLI builds the report from the results already collected with `interrupted=true`, emits it in the selected format (stdout or atomic file), logs a warning with completed/requested counts, and exits `130`.
@@ -777,3 +779,60 @@ Modules: `cli.py` (Typer wiring), `console.py` (Rich rendering, CLI-only), `logg
   - `ResourceWarning` is an error suite-wide, so a leaked socket would fail the suite.
 - **Manual Windows verification:** `tools/windows_console_ctrl_c.py` starts `netscope.exe` (the pip console-script launcher) in its own console and delivers a genuine `CTRL_C_EVENT` via `AttachConsole` + `GenerateConsoleCtrlEvent`. All four combinations passed: JSON/CSV to stdout and JSON/CSV to `-o` file each exited 130 with parseable partial output (7–10 of 200 probes). This is the OS event a keypress produces, triggered programmatically; the user has not yet pressed Ctrl-C by hand.
 - Suite: 488 passed, 1 skipped on Windows.
+- Phases 0–7 were committed locally, one commit per phase. The user then asked that commits and pushes not be made autonomously, so later work is left uncommitted for review.
+
+### Phase 8 — benchmark and tune (done; not committed)
+
+Tool: `benchmarks/bench.py`, plus `tests/test_benchmark_smoke.py` to keep it working.
+
+- **Fixture (loopback only):** 60 real listeners (`open`), 80 released ephemeral ports (`closed`, real refusals), 50 simulated lab drops (`timeout`, injected at the connect seam because loopback cannot drop SYNs), and 10 simulated local failures (`error`, EMFILE), shuffled with a fixed seed. Ground truth is written to `benchmarks/results/<stamp>-ground-truth.json` before scanning; accuracy compares against it, never against scanner output.
+- **Protocol:** each configuration gets 1 warm-up run (discarded) and 3 measured runs; medians are reported plus the duration spread. Real engine and real sockets, with the Windows mitigation on unless stated. Environment: Windows 11 26200, Python 3.12.0. `nmap` is not installed, so there is no nmap -sT comparison.
+- The sweep was run twice, before and after the post-Phase-8 fixes below. The tables are from the **final code** (`benchmarks/results/20261023T174840Z-sweep.json` and `…174851Z-sweep.json`). The earlier run agreed within 0.05 s on every duration.
+- **Mitigation check** (concurrency 100, rate 1,000/s, timeout 1 s):
+
+  | fast refusal | accuracy | closed p95 | duration |
+  |---|---|---|---|
+  | on | 1.000 | 9.3 ms | 1.22 s |
+  | off | 0.600 (all 80 closed → `inconclusive`) | 1,028 ms | 2.10 s |
+
+- **Sweep** (timeout 1 s; durations are medians of 3 runs, and every run had accuracy 1.000, 0 false `filtered`, 200/200 complete):
+
+  | concurrency \ rate | 50/s | 200/s | 1,000/s | 5,000/s |
+  |---|---|---|---|---|
+  | 10 | 8.08 s | 5.84 s | 5.21 s | 5.14 s |
+  | 50 | 4.79 s | 1.96 s | 1.20 s | 1.11 s |
+  | 100 | 4.78 s | 1.96 s | 1.20 s | 1.06 s |
+  | 200 | 4.79 s | 1.96 s | 1.21 s | 1.08 s |
+
+  Open-port p95 latency at concurrency 100: about 6 ms at 50/s and 200/s, 22–35 ms at 1,000/s, and 40–82 ms at 5,000/s (range across the two sweeps; high-rate tails are noisy). CPU time was ≤ 0.45 s per run in every configuration.
+- **Reading:**
+  - Accuracy does not depend on concurrency or rate in this range.
+  - Concurrency stops mattering once it is at least about rate × timeout (the slots that timeouts hold). 10 is a bottleneck; 50/100/200 are equivalent.
+  - Throughput tracks the rate cap up to about 1,000/s.
+  - Above about 200/s our own bursts inflate measured latency, roughly 6–14× at 5,000/s.
+
+#### Post-Phase-8 fixes (found by repeating the suite to hunt flaky tests)
+
+1. **Bug: a completed result could be lost on Ctrl-C.**
+   - Cause: in the old queue/generator scheduler, a worker could put a finished result on the queue just before Ctrl-C cancelled the consumer, and the result was dropped. It showed up as `test_cli_sigint…[json]` reporting 4 results instead of 5, about 1 run in 25.
+   - Fix: `run_bounded` is now a coroutine whose workers call `on_result(await fn(job))`. There is no suspension point between the probe returning and the callback, so cancellation cannot drop an existing result.
+   - New lossless engine entry points: `run_scan(plan, on_result=…)` and `run_discovery(plan, on_result=…)`. Discovery assembles host verdicts inside the synchronous per-probe callback. The CLI, `scan_ports` and `discover_hosts` use them.
+   - `iter_scan`/`iter_discovery` remain as streaming wrappers (`scheduler.stream_results`), documented as lossy on cancellation.
+   - Regression test: the run is cancelled synchronously from inside probe n+1 (n = 1, 5, 17), and exactly n results are kept.
+2. **Rate-limiter timing on Windows.**
+   - On Python 3.11/3.12 for Windows, `time.monotonic` (and therefore asyncio's loop clock) is GetTickCount64 with 15.6 ms ticks. The limiter's own clock is now `time.perf_counter`.
+   - Wake-ups still come from the loop clock, so an individual start can precede its slot by up to **two** loop ticks (deadline computed from a stale tick, then fired up to one tick early): ~31 ms on Windows 3.11/3.12, negligible on Linux and on Windows with Python ≥ 3.13.
+   - Slots are absolute, so the long-run rate is exact and the error never accumulates. Enforcing exact wake-ups would require busy-spinning, so it is documented instead. Timing tests use that bound as their tolerance.
+- **Flakiness check after both fixes:** 30/30 clean runs of the non-integration suite and 8/8 clean runs of the full suite. Console Ctrl-C re-verified (4/4 PASS) on the final code.
+- Suite: 494 passed, 1 skipped on Windows.
+
+### Final V1 defaults (Phase 8 decision; supersedes the "working default" wording in §8 and §20.6)
+
+| Setting | Default | Basis |
+|---|---|---|
+| Connect timeout | **1.0 s** (unchanged) | With the mitigation, refusals take 0.3 ms on loopback and 10 ms on the LAN, and open ports ≤ 15 ms on the LAN (§20.3). That gives about 60× headroom over the slowest observed LAN p95. Each timeout costs one slot for 1 s, which the concurrency default absorbs. |
+| Concurrency | **100** (unchanged) | Must be ≥ rate × timeout = 50 to avoid becoming the bottleneck. 50/100/200 measured identical; 100 leaves 2× headroom for slower networks or a raised timeout/rate. |
+| Rate | **50 probe starts/s** (unchanged) | The rate is a politeness/safety cap, not an accuracy limit (accuracy was 1.000 at every rate). Loopback cannot measure impact on real targets or middleboxes, so the conservative value stays. Rates up to 200/s showed no accuracy cost and little latency distortion, so `--rate 200` is a reasonable choice on an authorized LAN. |
+| Host cap | 256 | Policy (§20.4), not a performance setting. |
+
+**Limitations of this benchmark:** loopback only, so there is no real packet loss, RTT, or middlebox behaviour. Timeouts and errors are simulated at the connect seam. A single Windows machine. Discovery was not separately benchmarked, but it uses the same scheduler, limiter, and probe.
