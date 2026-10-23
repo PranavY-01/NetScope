@@ -5,6 +5,7 @@ import sys
 from ipaddress import IPv4Address
 
 import pytest
+from timing import EARLY_WAKE_MS
 
 from netscope.models import PortState
 from netscope.probe import classify_exception, error_code, fast_refusal_active, make_tcp_connect, probe_port
@@ -107,7 +108,7 @@ async def test_deadline_timeout_is_inconclusive_never_filtered():
     assert result.state is PortState.INCONCLUSIVE
     assert result.state is not PortState.FILTERED
     assert result.error_code == "timeout"
-    assert 40 <= result.elapsed_ms < 2000
+    assert 50 - EARLY_WAKE_MS <= result.elapsed_ms < 2000
 
 
 async def test_os_level_timeout_is_inconclusive():
@@ -149,7 +150,7 @@ async def test_elapsed_is_measured():
 
     result = await probe(connect=slow)
     assert result.state is PortState.OPEN
-    assert result.elapsed_ms >= 40
+    assert result.elapsed_ms >= 50 - EARLY_WAKE_MS
 
 
 # ---- real sockets on loopback ----------------------------------------------------------------

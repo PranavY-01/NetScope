@@ -5,6 +5,7 @@ from contextlib import aclosing
 from ipaddress import IPv4Address
 
 import pytest
+from timing import EARLY_WAKE_MS, EARLY_WAKE_S
 
 from netscope.config import ScanConfig
 from netscope.guardrails import ScopeError
@@ -14,10 +15,6 @@ from netscope.rate_limit import RateLimiter
 from netscope.resolver import ResolutionError
 from netscope.scanner import build_scan_report, iter_scan, prepare_scan, scan_ports
 from netscope.scheduler import RunTimer, run_bounded, stream_results
-
-# A start may precede its rate slot by up to two ticks of the loop clock (see RateLimiter):
-# ~31 ms on Windows with Python 3.11/3.12, negligible elsewhere.
-EARLY_WAKE = 2 * time.get_clock_info("monotonic").resolution + 0.002
 
 
 def config(target="127.0.0.1", **overrides):
@@ -150,7 +147,7 @@ async def test_start_rate_is_limited_independently_of_concurrency():
     [r async for r in iter_scan(plan, connect=net)]
     starts = sorted(t for _, _, t in net.calls)
     # Slots are absolute, so only the last start's early wake-up can shorten the span.
-    assert starts[-1] - starts[0] >= 40 / 200 - EARLY_WAKE
+    assert starts[-1] - starts[0] >= 40 / 200 - EARLY_WAKE_S
     assert time.perf_counter() - start < 5
 
 
@@ -279,4 +276,4 @@ async def test_slash_24_scan_against_local_fixture_within_limits():
     # if the listener were bound to all of 127/8 - it is bound to 127.0.0.1 only).
     assert all(state is PortState.CLOSED for ip, state in states.items() if ip != "127.0.0.1"), report.summary
     # At 2000 starts/s, 254 probes need >= ~126 ms.
-    assert report.metadata.duration_ms >= 253 / 2000 * 1000 * 0.9
+    assert report.metadata.duration_ms >= 253 / 2000 * 1000 - EARLY_WAKE_MS
