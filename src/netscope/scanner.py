@@ -8,7 +8,7 @@ from ipaddress import IPv4Address
 
 from netscope import __version__
 from netscope.config import CommonConfig, ScanConfig, parse_scan_target
-from netscope.guardrails import preflight_addresses
+from netscope.guardrails import check_authorized, preflight_addresses
 from netscope.models import PortResult, RunSettings, ScanMetadata, ScanReport, TargetError
 from netscope.probe import ConnectFn, fast_refusal_active, make_tcp_connect, probe_port
 from netscope.rate_limit import RateLimiter
@@ -32,8 +32,14 @@ class ScanPlan:
 
 
 async def prepare_scan(config: ScanConfig, *, resolver: Resolver = system_resolver) -> ScanPlan:
-    """Resolve and run the preflight guardrails. Raises ScopeError; opens no probe sockets."""
-    target = parse_scan_target(config.target)
+    """Check the acknowledgement, resolve, then run the scope guardrails. Raises ScopeError.
+
+    The acknowledgement gate comes first, so an unacknowledged request causes no DNS query and no probe.
+    Scope checks run on the resolved addresses, and the plan pins them: the engine probes exactly these
+    addresses, never a fresh resolution, so a name that later resolves elsewhere cannot widen the scope.
+    """
+    target = parse_scan_target(config.target)  # pure parsing, no network
+    check_authorized(config.authorized)
     target_errors: list[TargetError] = []
     if isinstance(target, IPv4Address):
         ips = [target]
@@ -48,6 +54,7 @@ async def prepare_scan(config: ScanConfig, *, resolver: Resolver = system_resolv
         ips,
         max_hosts=config.max_hosts,
         allow_public=config.allow_public,
+        allow_shared=config.allow_shared,
         allowlist=config.allowlist,
         authorized=config.authorized,
         what=f"target {config.target!r}",
@@ -97,6 +104,7 @@ def run_settings(config: CommonConfig) -> RunSettings:
         rate_per_s=config.rate,
         max_hosts=config.max_hosts,
         allow_public=config.allow_public,
+        allow_shared=config.allow_shared,
         allowlist_entries=None if config.allowlist is None else len(config.allowlist),
         fast_refusal_requested=config.fast_refusal,
         fast_refusal_active=config.fast_refusal and fast_refusal_active(),

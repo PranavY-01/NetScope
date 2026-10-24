@@ -1,0 +1,12 @@
+{
+  "error": {
+    "code": "invalid_config",
+    "message": "the scan settings are invalid",
+    "fields": [
+      {
+        "field": "ports",
+        "message": "inverted port range '100-1': start is greater than end"
+      }
+    ]
+  }
+}

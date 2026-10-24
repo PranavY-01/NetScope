@@ -1,5 +1,7 @@
 # NetScope V1 — Project Memory Capsule
 
+> **V2 note:** this file is now the project's **historical design log**: the V1 specification, measurements, and the build history of each phase. For the current system, read [ARCHITECTURE.md](ARCHITECTURE.md), [SECURITY.md](SECURITY.md), [API.md](API.md) and [DEVELOPMENT.md](DEVELOPMENT.md). V2 changes are recorded in §22; decisions it superseded are marked in place.
+>
 > **Purpose of this file:** the all-in-one reference for NetScope's objective, design choices, pre-implementation decisions, safety rules, architecture, evaluation plan, and remaining questions. Use it as the source of truth when continuing this project in a new chat or returning to it later. Preserve the distinctions between **agreed decisions**, **recommended defaults**, and **open details**.
 
 **Project:** NetScope  
@@ -226,7 +228,7 @@ Before opening sockets:
 3. Expand and validate CIDR targets; calculate the effective scan size and enforce the cap.
 4. Classify address ranges and apply public/special-range rules.
 5. Apply the configured allowlist.
-6. Require acknowledgement for an active scan.
+6. Require acknowledgement for an active scan. **[Superseded in V2 (§22): the acknowledgement is now checked before step 2, so an unacknowledged request causes no DNS query.]**
 7. Only then schedule network probes.
 
 The exact user-experience ordering of acknowledgement versus DNS/target checks may be tuned, but **no socket probes should start until the scan configuration and scope pass validation**.
@@ -587,7 +589,7 @@ Each target IPv4 address is classified by an explicit, ordered table (not by a "
 | Class | Ranges | V1 policy |
 |---|---|---|
 | `loopback` | 127.0.0.0/8 | allowed |
-| `private` | 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 (RFC 6598 shared/CGNAT) | allowed |
+| `private` | 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10 (RFC 6598 shared/CGNAT) | allowed **[Superseded in V2 (§22): 100.64.0.0/10 is now its own `shared` class, refused unless `--allow-shared`.]** |
 | `public` | anything not listed here | requires `--allow-public` |
 | `link_local` | 169.254.0.0/16 | rejected, no override |
 | `multicast` | 224.0.0.0/4 | rejected, no override |
@@ -646,7 +648,7 @@ Default **256**, counting **probe-target hosts**: for a CIDR, Python `ipaddress`
 
 Each phase ends with passing tests, an update here, and a commit.
 
-**Status at end of Phase 8:** V1 feature-complete on Windows. 494 tests pass, 1 skipped (non-Windows-only). The CI matrix (Linux + Windows, Python 3.11–3.13) exists but has never run, because nothing has been pushed. Version is still `1.0.0.dev0`; tagging a release is the user's call. No LICENSE file has been chosen yet.
+**Status at end of Phase 8 (historical; see §22 for V2):** V1 feature-complete on Windows. 494 tests pass, 1 skipped (non-Windows-only). The CI matrix (Linux + Windows, Python 3.11–3.13) exists but has never run, because nothing has been pushed. Version is still `1.0.0.dev0`; tagging a release is the user's call. No LICENSE file has been chosen yet.
 
 ### Phase 0 — spec freeze and Windows measurement (done)
 
@@ -837,3 +839,57 @@ Tool: `benchmarks/bench.py`, plus `tests/test_benchmark_smoke.py` to keep it wor
 | Host cap | 256 | Policy (§20.4), not a performance setting. |
 
 **Limitations of this benchmark:** loopback only, so there is no real packet loss, RTT, or middlebox behaviour. Timeouts and errors are simulated at the connect seam. A single Windows machine. Discovery was not separately benchmarked, but it uses the same scheduler, limiter, and probe.
+
+---
+
+## 22. V2 (local web application) — changes and decisions
+
+Implemented 2026-10-24 by the maintainer's V2 brief. Work was left as uncommitted working-tree changes for the owner to review; no Git commands were run.
+
+### 22.1 Review findings addressed
+
+| Finding | Confirmed in source? | Change |
+|---|---|---|
+| 6.1 Shared address space allowed by default | Yes: `100.64.0.0/10` was `PRIVATE` | New `AddressClass.SHARED`; refused (`shared_address`) unless `--allow-shared` / `allow_shared`; `--allow-public` does not imply it. `allow_shared` is recorded in `RunSettings` (report metadata) and the web app's effective settings. **Supersedes §20.2's shared-space row.** Four V1 test rows that encoded the old contract were updated with a comment; new tests cover the override's narrowness and boundaries (100.63.255.255 and 100.128.0.0 are public). |
+| 6.2 DNS before authorization | Yes: `prepare_scan` resolved before `preflight_addresses` checked `authorized` | `prepare_scan` and `prepare_discovery` call `check_authorized` before any resolution or expansion. Tests inject a resolver that fails if called before authorization (engine, CLI and API). **Supersedes §7.5's order.** |
+| 6.3 Result interpretation | — | README, User Guide, UI and SECURITY.md now explain observations vs facts, timeouts, `responsive` ≠ identified device, middleboxes, no service names. |
+| 6.4 Rate/concurrency clarity | — | New `netscope/estimate.py`: minimum duration `(probes − 1)/rate` and an "every probe times out" duration (the slower of the rate and concurrency/timeout bounds), with stated assumptions. Logged by the CLI, stored per scan by the API, and shown in the UI. Computed only after the plan, so never before authorization. |
+| 6.5 License | No LICENSE file | Left as an open owner decision; README says so. |
+| 6.6 README/CI accuracy | README had a hard-coded test count | Counts removed; tested platforms stated (Windows 11, Python 3.12.0, Node 24 only). The CI gained a frontend job because the new frontend tests would otherwise never run. |
+| 6.7 Design documentation | — | New ARCHITECTURE.md, SECURITY.md, API.md and DEVELOPMENT.md. This file was kept in place (not renamed) as the historical log, with a pointer at the top. |
+
+### 22.2 New components
+
+- **`netscope/store.py`:** SQLite with schema version 1.
+  - It refuses foreign or other-version databases without modifying them, and never recreates tables.
+  - `recover_interrupted()` marks scans a crash left running as `failed` (`server_restart`).
+  - Deletion is scoped to one finished scan.
+- **`netscope/jobs.py`:** the bounded job manager (2 running + 8 queued by default; `CapacityError` → 429).
+  - A global `RateLimiter` (500/s) is chained with each job's own limiter.
+  - Results are batch-flushed to SQLite. The flusher is stopped with an event, not cancelled; a race found while testing showed a cancelled mid-write flush could land after the final status.
+  - The job closes its cancel window before finalising (`cancel_requested = True`, with no await in between), so a late cancel cannot leave a row stuck in `running`.
+  - Shutdown cancels every job and waits for each to record its outcome.
+- **`netscope/api/`:** FastAPI routes, request/response schemas, and the server bounds (≤ 4,096 ports, ≤ 20,000 probes, timeout ≤ 10 s, concurrency ≤ 256, rate ≤ 500/s, host cap ≤ 1,024, allowlist ≤ 1,024 entries). The routes call the engine's own `prepare_*`; the API adds bounds but no policy.
+- **Request hardening:**
+  - a Host-header allowlist and a required `X-NetScope-Client` header on mutations (no CORS);
+  - a 64 KB body cap, strict CSP and security headers;
+  - a uniform error shape with no stack traces.
+- **`netscope serve`:** loopback-only (others exit 2), checks the database before starting, and serves `frontend/dist` when present.
+- **`frontend/`:** React 19 + TypeScript 7 + Vite 8, with hash routing and no UI library.
+  - Pages: dashboard, new scan, scan detail (polling, cancel, export, delete), and history.
+  - Progress is determinate only when the API reports a total.
+  - The built `index.html` has no inline script or style, so the CSP holds.
+- **`ChainedLimiter`** (`rate_limit.py`) and the extra `allow_shared` parameter (`guardrails.py`, `config.py`) are the only engine API additions. Existing engine calls keep working unchanged: every new parameter has a default that preserves the old call shape (`allow_shared=False`).
+
+### 22.3 Verification (Windows 11 26300, Python 3.12.0, Node 24.19)
+
+- **Baseline before changes:** 494 passed, 1 skipped. The "523" figure from the external review matches Linux CI, which has more `errno` parameters, not Windows.
+- **After V2:** 598 Python tests passed, 1 skipped; 35 frontend tests passed. The suites ran 10/10 (Python) and 5/5 (frontend) times with no failures.
+- **Type-check and build:** `npm run build` succeeds (tsc + Vite).
+- **Real end-to-end check:**
+  - `netscope serve` was driven over HTTP.
+  - The CSRF header, acknowledgement, public, shared and foreign-Host rejections were all enforced.
+  - `localhost` resolved to 127.0.0.1 and the real engine scanned a loopback listener (`open`) and an unused port (`closed`).
+  - The CSV export downloaded, and a /29 discovery completed.
+- **Rendering:** the dashboard, scan detail and new-scan pages were rendered by headless Microsoft Edge under the CSP.
+- **Not verified:** Linux/macOS for V2, and the CI run itself (nothing pushed from this session).

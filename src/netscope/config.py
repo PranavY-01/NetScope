@@ -119,6 +119,8 @@ class CommonConfig(BaseModel):
     rate: float = Field(DEFAULT_RATE_PER_S, gt=0, le=10_000)
     max_hosts: int = Field(DEFAULT_MAX_HOSTS, ge=1, le=MAX_HOSTS_CEILING)
     allow_public: bool = False
+    # Separate from allow_public: shared address space (100.64.0.0/10) is never implied by it.
+    allow_shared: bool = False
     allowlist: tuple[IPv4Network, ...] | None = None
     authorized: bool = False
     # Windows only: disable SYN retransmission after RST so refusals are not ~2 s (capsule §20.3).

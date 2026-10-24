@@ -89,6 +89,25 @@ def test_raised_cap_allows_larger_network():
     assert prepare_discovery(config("10.0.0.0/23", max_hosts=510)).requested_hosts == 510
 
 
+def test_shared_space_discovery_needs_allow_shared():
+    with pytest.raises(ScopeError) as info:
+        prepare_discovery(config("100.64.0.0/29", allow_public=True))
+    assert info.value.code == "shared_address"
+    assert prepare_discovery(config("100.64.0.0/29", allow_shared=True)).requested_hosts == 6
+
+
+def test_acknowledgement_is_checked_first(monkeypatch):
+    """Even an oversized range reports the missing acknowledgement, and is never expanded."""
+
+    def boom(self):
+        raise AssertionError("expanded before authorization")
+
+    monkeypatch.setattr(IPv4Network, "hosts", boom)
+    with pytest.raises(ScopeError) as info:
+        prepare_discovery(config("10.0.0.0/8", authorized=False))
+    assert info.value.code == "not_authorized"
+
+
 # ---- orchestration with a scripted network --------------------------------------------------
 
 

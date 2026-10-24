@@ -8,7 +8,7 @@ from ipaddress import IPv4Address
 
 from netscope import __version__
 from netscope.config import DiscoveryConfig
-from netscope.guardrails import expand_hosts, preflight_addresses
+from netscope.guardrails import check_authorized, expand_hosts, preflight_addresses
 from netscope.models import (
     DiscoveryMetadata,
     DiscoveryReport,
@@ -43,12 +43,18 @@ class DiscoveryPlan:
 
 
 def prepare_discovery(config: DiscoveryConfig) -> DiscoveryPlan:
-    """Enforce the cap from the CIDR size, expand, then run the remaining guardrails. Raises ScopeError."""
+    """Check the acknowledgement, enforce the cap from the CIDR size, expand, then run the scope guardrails.
+
+    Discovery never resolves names, but the acknowledgement is checked first for the same ordering as
+    prepare_scan. Raises ScopeError.
+    """
+    check_authorized(config.authorized)
     hosts = expand_hosts(config.network, config.max_hosts)
     preflight_addresses(
         hosts,
         max_hosts=config.max_hosts,
         allow_public=config.allow_public,
+        allow_shared=config.allow_shared,
         allowlist=config.allowlist,
         authorized=config.authorized,
         what=f"network {config.network}",

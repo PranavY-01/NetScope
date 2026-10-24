@@ -91,6 +91,7 @@ class RunSettings(_Model):
     rate_per_s: float
     max_hosts: int
     allow_public: bool
+    allow_shared: bool = False
     allowlist_entries: int | None
     fast_refusal_requested: bool
     fast_refusal_active: bool

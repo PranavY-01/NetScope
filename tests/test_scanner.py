@@ -105,6 +105,68 @@ async def test_public_ok_with_override():
     assert plan.ips == (IPv4Address("93.184.216.34"),)
 
 
+async def test_hostname_resolving_to_shared_space_needs_allow_shared():
+    with pytest.raises(ScopeError) as info:
+        await prepare_scan(config("cgnat.lan", allow_public=True), resolver=resolver_of("100.64.1.2"))
+    assert info.value.code == "shared_address"
+    plan = await prepare_scan(config("cgnat.lan", allow_shared=True), resolver=resolver_of("100.64.1.2"))
+    assert plan.ips == (IPv4Address("100.64.1.2"),)
+
+
+async def test_scope_applies_to_every_resolved_address():
+    """One out-of-scope A record rejects the whole hostname, not just that address."""
+    with pytest.raises(ScopeError) as info:
+        await prepare_scan(config("mixed.lan"), resolver=resolver_of("10.0.0.1", "8.8.8.8"))
+    assert info.value.code == "public_target"
+
+
+async def test_unauthorized_request_never_reaches_the_resolver():
+    """Review finding 6.2: the acknowledgement gate precedes any DNS query."""
+
+    async def must_not_resolve(host):
+        raise AssertionError(f"resolver called for {host!r} before authorization")
+
+    for target in ("some.lan", "8.8.8.8.example", "pub.example"):
+        with pytest.raises(ScopeError) as info:
+            await prepare_scan(config(target, authorized=False), resolver=must_not_resolve)
+        assert info.value.code == "not_authorized"
+
+
+async def test_authorized_request_does_resolve():
+    calls = []
+
+    async def recording(host):
+        calls.append(host)
+        return ["10.0.0.9"]
+
+    await prepare_scan(config("ok.lan"), resolver=recording)
+    assert calls == ["ok.lan"]
+
+
+async def test_input_errors_are_reported_without_resolving():
+    """Pure parsing may precede the gate; invalid syntax fails before any resolver call either way."""
+    from netscope.config import ConfigError
+
+    async def must_not_resolve(host):
+        raise AssertionError("resolver called")
+
+    with pytest.raises((ConfigError, ValueError)):
+        await prepare_scan(ScanConfig.model_construct(target="10.1", authorized=True, ports=(80,)), resolver=must_not_resolve)
+
+
+async def test_plan_pins_resolved_addresses():
+    """The engine probes the plan's addresses; it never re-resolves the name (DNS rebinding guard)."""
+    answers = iter([["10.0.0.5"], ["8.8.8.8"]])
+
+    async def changing(host):
+        return next(answers)
+
+    plan = await prepare_scan(config("flip.lan", ports="80"), resolver=changing)
+    net = FakeNetwork()
+    [r async for r in iter_scan(plan, connect=net)]
+    assert [(ip, port) for ip, port, _ in net.calls] == [("10.0.0.5", 80)]
+
+
 # ---- orchestration ---------------------------------------------------------------------------
 
 

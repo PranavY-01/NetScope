@@ -169,6 +169,46 @@ def test_help_needs_no_acknowledgement():
     assert "--yes-authorized" in plain(wide.output)
 
 
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [
+        (["scan", "100.64.0.1", "--yes-authorized"], 2),
+        (["scan", "100.64.0.1", "--yes-authorized", "--allow-public"], 2),
+        (["discover", "100.64.0.0/30", "--yes-authorized", "--allow-public"], 2),
+        (["scan", "100.64.0.1", "--yes-authorized", "--allow-shared", "-q"], 0),
+        (["discover", "100.64.0.0/30", "--yes-authorized", "--allow-shared", "-q"], 0),
+        (["scan", "8.8.8.8", "--yes-authorized", "--allow-shared"], 2),
+    ],
+)
+def test_allow_shared_flag(network, args, code):
+    result = invoke(*args)
+    assert result.exit_code == code, result.output
+    if code == 2:
+        assert "--allow-shared" in plain(result.stderr) or "--allow-public" in plain(result.stderr)
+
+
+def test_allow_shared_is_recorded_in_report_settings(network):
+    data = json.loads(invoke("scan", "100.64.0.1", "--yes-authorized", "--allow-shared", "--json").stdout)
+    assert data["metadata"]["settings"]["allow_shared"] is True
+    data = json.loads(invoke("scan", "127.0.0.1", "--yes-authorized", "--json").stdout)
+    assert data["metadata"]["settings"]["allow_shared"] is False
+
+
+def test_no_dns_lookup_without_acknowledgement(monkeypatch):
+    async def must_not_resolve(host):
+        raise AssertionError("DNS lookup before authorization")
+
+    monkeypatch.setattr("netscope.resolver.system_resolver", must_not_resolve)
+    result = invoke("scan", "some.lan", "--json")
+    assert result.exit_code == 2
+    assert "not_authorized" in plain(result.stderr)
+
+
+def test_estimate_is_logged(network):
+    result = invoke("scan", "127.0.0.1", "-p", "1-100", "--yes-authorized", "--json", "--rate", "10000")
+    assert "estimated duration: at least" in plain(result.stderr)
+
+
 # ---- machine-readable output ----------------------------------------------------------------
 
 

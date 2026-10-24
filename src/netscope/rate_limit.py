@@ -40,3 +40,18 @@ class RateLimiter:
         delay = slot - now
         if delay > 0:
             await self._sleep(delay)
+
+
+class ChainedLimiter:
+    """Acquire each limiter in turn, so the effective start rate is the slowest of them.
+
+    The web server chains a job's own limiter with one server-wide limiter, so concurrent jobs can
+    never add up to more than the global cap.
+    """
+
+    def __init__(self, *limiters: RateLimiter) -> None:
+        self.limiters = limiters
+
+    async def acquire(self) -> None:
+        for limiter in self.limiters:
+            await limiter.acquire()
