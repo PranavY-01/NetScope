@@ -1,6 +1,6 @@
 # NetScope User Guide
 
-A step-by-step guide to installing and running NetScope V1, reading its results, and fixing common errors.
+A step-by-step guide to installing and running NetScope (command line and local web application), reading its results, and fixing common errors.
 
 > **Responsible use:** only scan machines and networks you own or are explicitly authorized to test. Your own computer (`127.0.0.1`) is always safe to practise on.
 
@@ -23,6 +23,7 @@ A step-by-step guide to installing and running NetScope V1, reading its results,
 15. [Common errors and fixes](#15-common-errors-and-fixes)
 16. [Quick reference](#16-quick-reference)
 17. [For developers](#17-for-developers)
+18. [The web application](#18-the-web-application)
 
 ---
 
@@ -167,15 +168,24 @@ netscope scan 10.0.0.5 -p 1-1024 --yes-authorized --timeout 2
 
 Benchmarks showed no accuracy loss up to `--rate 200` on a local network. The default stays at 50 to be gentle on networks you do not fully control.
 
+**How the three settings interact:**
+- The **rate** usually decides how long a scan takes. At 50 checks per second, 762 checks (a /24 with 3 ports) need at least 15 seconds, however high you set concurrency.
+- **Concurrency** only matters when many checks time out, because each silent check holds a slot until its timeout.
+
+Every run prints an **estimate**: the minimum time the rate allows, and the time if every check timed out. It is labelled as an estimate, and real runs fall in between.
+
 ## 10. Safety options
 
-Every check below runs **before** any network traffic. If one fails, nothing is scanned.
+Every check below runs **before** any network traffic. If one fails, nothing is scanned. `--yes-authorized` is checked first, before NetScope even looks up a hostname.
 
 | Option | What it does |
 |---|---|
 | `--allowlist FILE` | Only allow targets listed in the file. If any target falls outside it, the whole run is refused. |
 | `--allow-public` | Allow internet (public) addresses, which are blocked by default. |
+| `--allow-shared` | Allow shared address space `100.64.0.0/10`, which is blocked by default. Internet providers use it for carrier-grade NAT, so addresses there can belong to *other customers*. |
 | `--max-hosts N` | Raise the limit of 256 machines per run (a warning is shown). |
+
+Each override covers only its own range. `--allow-public` does **not** allow `100.64.x.x` addresses; you need `--allow-shared` for those. Neither override skips the acknowledgement, the host limit, or the allowlist.
 
 Example allowlist file `lab.txt`, with one address or range per line and `#` for comments:
 
@@ -190,7 +200,7 @@ Example allowlist file `lab.txt`, with one address or range per line and `#` for
 netscope discover 192.168.1.0/24 --yes-authorized --allowlist lab.txt
 ```
 
-These addresses are **always** refused, even with `--allow-public`: link-local (`169.254.x.x`), multicast (`224.0.0.0`–`239.255.255.255`), `0.x.x.x`, broadcast (`255.255.255.255`), reserved (`240.0.0.0` and up), and documentation/benchmarking ranges.
+These addresses are **always** refused, even with `--allow-public` or `--allow-shared`: link-local (`169.254.x.x`), multicast (`224.0.0.0`–`239.255.255.255`), `0.x.x.x`, broadcast (`255.255.255.255`), reserved (`240.0.0.0` and up), and documentation/benchmarking ranges.
 
 ## 11. Log messages
 
@@ -205,23 +215,27 @@ Press **Ctrl + C**. NetScope stops starting new checks and cancels the ones in p
 
 ## 13. Reading the results
 
+Results describe what NetScope **observed from your computer's position on the network** at the moment of the scan. They are not guarantees about a device or a service.
+
 ### Port states (`scan`)
 
 | State | Meaning |
 |---|---|
-| `open` | A connection was made; something is listening |
-| `closed` | The machine actively refused the connection |
-| `inconclusive` | No answer in time (or the machine was unreachable), so no conclusion is drawn |
+| `open` | The connection attempt succeeded from your computer |
+| `closed` | The attempt was actively refused, consistent with nothing listening on that port |
+| `inconclusive` | No answer in time (or unreachable), so no conclusion is drawn. **A timeout does not prove the machine is off.** |
 | `error` | A problem on your side prevented the check; the detail column explains it |
-| `filtered` | Reserved for future versions; never shown in V1 |
+| `filtered` | Reserved; never shown, because a plain connection attempt cannot prove filtering |
 
 ### Host verdicts (`discover`)
 
 | Verdict | Meaning |
 |---|---|
-| `responsive` | The machine answered on at least one port. A refusal counts as an answer. |
+| `responsive` | Something answered on at least one port, including a refusal. This is network evidence, **not proof of which device it is.** |
 | `no_response` | No answer on the checked ports. The machine **may still be on**; it might ignore those ports. |
 | `error` | A problem on your side prevented a proper check |
+
+**Firewalls, routers, proxies and load balancers can change what you see.** They can answer for a device that is not there, refuse on its behalf, or silently drop checks. Read results as "what this network showed me", not "what is definitely there". NetScope never guesses service names: a port number alone does not prove what is running.
 
 The table's **Evidence** column shows each port result behind a verdict, e.g. `22:inconclusive 80:open 443:closed`.
 
@@ -243,8 +257,9 @@ Useful in scripts. In PowerShell, read the code with `$LASTEXITCODE`.
 
 | The message says | Fix |
 |---|---|
-| `requires --yes-authorized` | Add `--yes-authorized` |
+| `requires an explicit authorization acknowledgement` | Add `--yes-authorized` (or tick the authorization box in the web UI) |
 | `require --allow-public` | The target is on the internet; add the flag only if you are authorized |
+| `requires --allow-shared` | The target is in `100.64.0.0/10` (carrier-grade NAT); add `--allow-shared` only if you are authorized |
 | `special-purpose addresses cannot be scanned` | That address type is always blocked (see section 10) |
 | `over the cap of 256` | Use a smaller range, or add `--max-hosts` |
 | `has host bits set; did you mean …` | Use the suggested range, e.g. `192.168.1.0/24` instead of `192.168.1.5/24` |
@@ -265,6 +280,7 @@ Windows normally takes about 2 seconds to report a closed port. NetScope switche
 ```text
 netscope scan TARGET [options]          one machine (IPv4 address or hostname)
 netscope discover NETWORK [options]     a range, e.g. 192.168.1.0/24
+netscope serve [--port 8765] [--db FILE]   local web application (loopback only)
 
   -p, --ports / --discovery-ports   ports to check           default 22,80,443
   -t, --timeout                     seconds per check        default 1
@@ -272,6 +288,7 @@ netscope discover NETWORK [options]     a range, e.g. 192.168.1.0/24
   -r, --rate                        checks started per sec   default 50
       --max-hosts                   machine limit            default 256
       --allow-public                allow internet addresses
+      --allow-shared                allow 100.64.0.0/10 (carrier-grade NAT)
       --allowlist FILE              restrict to listed targets
       --yes-authorized              REQUIRED confirmation
   -f, --format json|csv / --json / --csv    machine-readable output
@@ -289,7 +306,61 @@ python benchmarks\bench.py                    # full concurrency x rate sweep
 python tools\windows_console_ctrl_c.py .\.venv\Scripts\netscope.exe   # Windows Ctrl-C check
 ```
 
-Design decisions, measurements and the build log are in [NetScope_V1_Memory_Capsule.md](NetScope_V1_Memory_Capsule.md).
+More in [DEVELOPMENT.md](DEVELOPMENT.md) and [ARCHITECTURE.md](ARCHITECTURE.md). The V1 design log, measurements and build history are in [NetScope_V1_Memory_Capsule.md](NetScope_V1_Memory_Capsule.md).
+
+## 18. The web application
+
+The same scanner, in your browser. It runs only on your own computer.
+
+### Start it
+
+The first time, build the interface (needs Node.js):
+
+```powershell
+cd frontend
+npm ci
+npm run build
+cd ..
+```
+
+Then, every time:
+
+```powershell
+netscope serve
+```
+
+Open **http://127.0.0.1:8765**. Scan history is saved in `netscope.db` in the current folder; use `--db` to choose another file. Press **Ctrl + C** in the terminal to stop the server. Scans still running are stopped and marked *cancelled*, and their finished results are kept.
+
+`netscope serve` only listens on your own computer (`127.0.0.1`). It refuses other addresses because the web app has no logins.
+
+### Use it
+
+1. **Dashboard:** counts of stored, completed, running and cancelled/failed scans, and your recent scans.
+2. **New scan:**
+   - choose *Port scan* (one machine) or *Host discovery* (a range);
+   - enter the target and ports, and optionally adjust *Timing and limits*;
+   - tick the scope overrides only if you need them; you can also paste an allowlist, one address or range per line;
+   - **tick the authorization box.**
+
+   The *Effective settings* panel shows exactly what will be sent, and the server checks everything again.
+3. **Scan page:**
+   - live progress; the bar only shows a percentage when the total is known;
+   - **Cancel scan**, which keeps finished results;
+   - the effective settings and duration estimate;
+   - result tables you can filter by state and sort;
+   - **Export JSON / Export CSV**, the same files the command line produces;
+   - **Delete**.
+4. **History:** search by target or ID, filter by status or type, and open any past scan.
+
+### Limits
+
+The web app is a little stricter than the command line:
+- up to 4,096 ports and 20,000 checks per scan;
+- timeout up to 10 s;
+- rate up to 500 per second per scan, and 500 per second across all scans;
+- at most 2 scans running and 8 waiting.
+
+If you hit a limit, the form shows the server's message.
 
 ---
 

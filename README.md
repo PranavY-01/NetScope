@@ -1,59 +1,73 @@
 # NetScope
 
-An evidence-based IPv4 TCP port scanner and host-discovery tool for authorized networks, built in Python with a reusable async engine.
+An evidence-based IPv4 TCP port scanner and host-discovery tool for authorized networks. It has a command-line interface and a local web application, both built on one reusable async Python engine.
 
-> **Status: V1 feature-complete (`1.0.0.dev0`).** Tested on Windows 11 with Python 3.12 (494 tests). A Linux + Windows CI matrix is configured but has not yet run. Design decisions, measurements, and the build log are in [docs/NetScope_V1_Memory_Capsule.md](docs/NetScope_V1_Memory_Capsule.md).
+> **Status: V2 in development (`2.0.0.dev0`).**
+> - **What V2 adds:** the local web app (FastAPI backend, React + TypeScript UI, SQLite history), a separate opt-in for shared address space, and an authorization check that now runs before any DNS lookup.
+> - **Where it has been tested:** only locally, on Windows 11 with Python 3.12.0 and Node 24. Linux and macOS are expected to work but have not been verified for V2. The GitHub Actions matrix (Windows + Ubuntu, Python 3.11–3.13, plus a frontend job) will report them once this branch is pushed.
 
 ---
 
-## Overview
+## Contents
 
-NetScope finds which IPv4 hosts respond on an authorized network and which TCP ports accept, refuse, or ignore connections. It uses ordinary TCP connect probes, so it needs no raw-packet privileges.
+- [What it does](#what-it-does)
+- [Responsible use](#responsible-use)
+- [Install](#install)
+- [Command line](#command-line)
+- [Web application](#web-application)
+- [Reading the results](#reading-the-results)
+- [Safety guardrails](#safety-guardrails)
+- [Speed: rate, concurrency and timeout](#speed-rate-concurrency-and-timeout)
+- [Output and exit codes](#output-and-exit-codes)
+- [Architecture](#architecture)
+- [Testing](#testing)
+- [Platform notes](#platform-notes)
+- [Not included](#not-included)
+- [Documentation](#documentation)
+- [License](#license)
 
-The aim is not only to report which ports respond. It is to handle uncertainty honestly, validate input before acting, keep its own network activity bounded, and produce reproducible results.
+## What it does
+
+- **Port scan:** TCP connect probes against one IPv4 address or hostname. Every IPv4 address the name resolves to is scanned and reported separately.
+- **Host discovery:** TCP connect probes across an IPv4 CIDR. Each address gets an evidence-based verdict with its per-probe evidence.
+- **Interfaces:** the command line (Rich tables, JSON or CSV) and a local web UI (dashboard, scan form, live progress, results, history, exports).
+- **Shared rules:** both use the same engine and the same scope policy. The web API cannot apply a weaker policy than the CLI.
+
+NetScope uses ordinary `connect()` calls, so it needs no administrator rights and sends no crafted packets.
 
 ## Responsible use
 
-Only scan systems and networks that you own or have explicit permission to test. Scanning without authorization may be illegal and may violate acceptable-use policies.
+Only scan systems and networks that you own or have explicit permission to test. Scanning without authorization may be illegal and may breach acceptable-use policies.
 
-NetScope's safety controls (host cap, address-range policy, allowlist, authorization flag) reduce the chance of accidental misuse. They cannot prove that you are authorized, and they do not replace your own responsibility.
+The guardrails reduce the chance of accidental misuse: the authorization acknowledgement, host cap, address-range policy and allowlist. They cannot prove that you are authorized.
 
 ## Install
 
-Requires Python 3.11+.
+Requires Python 3.11+. The web UI additionally needs Node.js (developed with Node 24) to build.
 
 ```powershell
 git clone https://github.com/PranavY-01/NetScope.git
 cd NetScope
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1          # Linux/macOS: source .venv/bin/activate
-pip install -e ".[dev]"
-netscope --help
+pip install -e ".[dev]"               # CLI + web backend + test tools
 ```
 
-## Usage
+The `web` extra (FastAPI, uvicorn) is optional. `pip install -e .` alone gives you the CLI.
 
-For a step-by-step walkthrough (installing, every option, reading results, and fixing errors), see the **[User Guide](docs/USER_GUIDE.md)**.
+## Command line
 
 ```text
-netscope scan TARGET [OPTIONS]        # one IPv4 address or hostname (every resolved IPv4 address)
+netscope scan TARGET [OPTIONS]        # one IPv4 address or hostname
 netscope discover NETWORK [OPTIONS]   # an IPv4 CIDR, e.g. 192.168.1.0/24
+netscope serve [OPTIONS]              # the local web application
 ```
 
-Examples:
-
 ```powershell
-# Scan the default ports (22, 80, 443) on a lab host
-netscope scan 192.168.1.20 --yes-authorized
-
-# Ports as single values, lists and ranges; JSON to stdout
+netscope scan 127.0.0.1 --yes-authorized
 netscope scan router.lan -p 22,80,8000-8010 --yes-authorized --json
-
-# Discover responsive hosts in a /24 and write CSV atomically to a file
 netscope discover 192.168.1.0/24 --yes-authorized -o hosts.csv
-
-# Restrict scope to an allowlist file
-netscope discover 10.20.0.0/28 --yes-authorized --allowlist lab-scope.txt
+netscope discover 100.64.10.0/28 --yes-authorized --allow-shared
 ```
 
 | Option | Default | Meaning |
@@ -61,158 +75,188 @@ netscope discover 10.20.0.0/28 --yes-authorized --allowlist lab-scope.txt
 | `-p`, `--ports` / `--discovery-ports` | `22,80,443` | Ports, lists and inclusive ranges. Malformed or inverted specs are rejected, never widened. |
 | `-t`, `--timeout` | `1.0` | TCP connect timeout per probe, in seconds. |
 | `-c`, `--concurrency` | `100` | Maximum probes in flight. |
-| `-r`, `--rate` | `50` | Maximum probe starts per second across the whole run (exact over time; an individual start can come up to ~31 ms early on Windows with Python 3.11/3.12). |
+| `-r`, `--rate` | `50` | Maximum probe starts per second across the whole run. |
 | `--max-hosts` | `256` | Host cap. Raising it is logged as a warning (ceiling 65,536). |
-| `--allow-public` | off | Permit globally routable targets. Never bypasses the other checks. |
+| `--allow-public` | off | Permit globally routable targets. |
+| `--allow-shared` | off | Permit shared address space `100.64.0.0/10` (carrier-grade NAT). Not implied by `--allow-public`. |
 | `--allowlist FILE` | none | Permitted IPv4 addresses/CIDRs; any target outside it rejects the whole run. |
-| `--yes-authorized` | **required** | Confirms you are authorized to test every target. |
+| `--yes-authorized` | **required** | Confirms you are authorized to test every target. Checked before any DNS lookup. |
 | `-f`, `--format json\|csv`, `--json`, `--csv` | human table | Machine-readable output. Conflicting choices are rejected. |
 | `-o`, `--output FILE` | stdout | Write the report atomically; the format can be inferred from `.json`/`.csv`. |
-| `-v`, `--verbose` / `-q`, `--quiet` | info | Debug logging / warnings only. Logs always go to stderr. |
+| `-v`, `--verbose` / `-q`, `--quiet` | info | Logging detail. Logs always go to stderr. |
 
-## Port states
+Each run logs an **estimated duration**: a lower bound from the rate limit, and a figure for the case where every probe times out. See [Speed](#speed-rate-concurrency-and-timeout).
 
-| State | Meaning |
+The [User Guide](docs/USER_GUIDE.md) walks through every option step by step.
+
+## Web application
+
+```powershell
+cd frontend
+npm ci
+npm run build           # produces frontend/dist
+cd ..
+netscope serve          # http://127.0.0.1:8765
+```
+
+- **What `serve` runs:** the API and the built UI on `127.0.0.1:8765`, with scan history stored in `./netscope.db` (change it with `--db`).
+- **Loopback only:** `serve` refuses to bind anywhere but loopback, because the API has no user accounts.
+- **API reference:** interactive docs are at `/api/docs`; the contract is in [docs/API.md](docs/API.md).
+- **UI development:** run `netscope serve` and `npm run dev` in `frontend/`, then open `http://127.0.0.1:5173`. The dev server proxies `/api` to the backend. See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+The UI has five parts:
+- **Dashboard:** stored, completed, running/queued and cancelled/failed counts, plus recent scans, all from the database.
+- **New scan:** the target, ports, timing and limits, the scope overrides, an optional inline allowlist, a required authorization acknowledgement, and an effective-settings preview. The server re-validates everything.
+- **Scan detail:**
+  - live progress (indeterminate when the total is unknown, never an invented percentage) and cancellation;
+  - effective settings and the duration estimate with its assumptions;
+  - result tables with state filtering and sorting, partial-result and error banners;
+  - JSON/CSV export and delete.
+- **History:** search, status and type filters, and pagination.
+
+Scans run in a bounded in-process job manager: 2 running and 8 queued by default, with a server-wide cap of 500 probe starts per second. Jobs are **not durable**. If the server stops, running scans are marked cancelled (graceful stop) or failed (crash). Results already recorded are kept.
+
+## Reading the results
+
+Results are **observations from the scanner's network position at probe time**. They are not facts about a device.
+
+| Port state | Meaning |
 |---|---|
-| `open` | A TCP connection was established. |
-| `closed` | The destination actively refused the connection. |
-| `filtered` | Reserved in the schema. **Never emitted in V1**, because a TCP connect alone gives no reliable evidence of filtering. |
-| `inconclusive` | Not enough evidence: a connect timeout, or a host/network-unreachable signal. The error code is kept. |
-| `error` | A local or operational failure (e.g. too many open files) prevented classification. A machine-readable code and short message are kept. |
+| `open` | The TCP connection attempt succeeded from where NetScope runs. |
+| `closed` | The attempt was actively refused (consistent with nothing listening, or a device refusing on its behalf). |
+| `inconclusive` | Not enough evidence: no answer before the timeout, or a host/network-unreachable signal. **A timeout does not prove a host is offline or a port is filtered.** |
+| `error` | A local or operational failure prevented classification (a code and message are kept). |
+| `filtered` | Reserved. **Never emitted**: a TCP connect alone gives no reliable evidence of filtering. |
 
-Port states describe what the scanner observed from its own network position at probe time. They are not guarantees about the target.
-
-## Host-discovery verdicts
-
-| Verdict | Rule |
+| Discovery verdict | Rule |
 |---|---|
-| `responsive` | At least one probe got a TCP-level response: a connection **or an explicit refusal**. |
-| `error` | No TCP response, and at least one probe failed with a local/operational error, so absence cannot be asserted. |
-| `no_response` | Every probe was inconclusive (e.g. all timed out). This is absence of evidence, not proof the host is down. |
+| `responsive` | At least one probe got a TCP-level answer: a connection or a refusal. This is network evidence, **not proof that a specific device exists**. |
+| `error` | No TCP answer, and at least one probe failed locally, so absence cannot be asserted. |
+| `no_response` | Every probe was inconclusive. Absence of evidence, **not proof the host is down**. |
 
-Each host's per-probe evidence (port, state, timing, error code) is kept in the report. All configured ports are probed on every host.
+**Middleboxes matter.**
+- Firewalls, NAT gateways, proxies and load balancers can answer on a host's behalf. For example, a firewall that sends resets makes ports look `closed`, and a load balancer can make an address look `open`.
+- Middleboxes can also silently drop probes, which turns into `inconclusive` or `no_response`.
+
+**Service names are never shown.** A port number alone does not prove which service is listening.
 
 ## Safety guardrails
 
-All checks run in this order before any probe socket is opened. Any failure exits with code `2`.
+Applied identically to CLI and API requests, in this order, before any probe socket is opened:
 
-1. **Input validation:** ports, target or CIDR syntax, timeout/concurrency/rate bounds, output flags, allowlist file syntax. A CIDR with host bits set is rejected with a suggested correction.
-2. **Name resolution** (`scan` only), IPv4 answers only.
-3. **Host cap:** 256 probe-target hosts by default, counted with `ipaddress` `.hosts()` semantics (a /24 is 254 hosts). Oversized ranges are rejected without being enumerated.
-4. **Address policy**, from an explicit range table:
-   - Loopback (127/8) and private space (RFC 1918, plus 100.64/10) are allowed.
-   - Public addresses require `--allow-public`.
-   - Link-local, multicast, `0.0.0.0/8`, broadcast, `240/4` and documentation/benchmarking ranges are always rejected.
+1. **Input validation:** port spec, target or CIDR syntax, numeric bounds, output flags, allowlist syntax. This is pure parsing, with no network activity.
+2. **Authorization acknowledgement** (`--yes-authorized`, or the checkbox / `"authorized": true` in the web app). It is checked **before any DNS lookup**: an unacknowledged request causes no network activity at all.
+3. **Name resolution** (port scans only), IPv4 answers only.
+4. **Host cap:** 256 probe-target hosts by default, counted from the CIDR size before anything is enumerated.
+5. **Address policy, checked on every resolved address:**
 
-   Python's `ipaddress.is_global` alone would treat multicast as public, so it is deliberately not relied on.
-5. **Allowlist:** all-or-nothing.
-6. **Authorization acknowledgement:** `--yes-authorized` on every scan.
+   | Class | Ranges | Policy |
+   |---|---|---|
+   | loopback | 127.0.0.0/8 | allowed |
+   | private | 10/8, 172.16/12, 192.168/16 | allowed |
+   | shared | 100.64.0.0/10 (carrier-grade NAT) | needs `--allow-shared` |
+   | public | everything not listed | needs `--allow-public` |
+   | link-local, multicast, `0/8`, broadcast, `240/4`, documentation/benchmarking/IETF ranges | — | always refused |
+
+6. **Allowlist:** all-or-nothing.
+
+**How the overrides combine:**
+- Each override covers only its own class: `--allow-public` does not authorize shared space, and `--allow-shared` does not authorize public space.
+- No override bypasses the cap, the allowlist, the acknowledgement, or the rate and timeout limits.
+- The scan plan pins the resolved addresses, and the engine probes exactly those, so a name that later resolves elsewhere cannot widen the scope.
+
+The web server adds its own hardening. Details are in [docs/SECURITY.md](docs/SECURITY.md).
+- **Binding:** loopback only.
+- **Request protection:**
+  - a Host-header allowlist (against DNS rebinding);
+  - a required `X-NetScope-Client` header on mutations (against CSRF);
+  - no CORS;
+  - a 64 KB body cap.
+- **Response headers:** a strict Content-Security-Policy, plus tighter per-scan bounds than the CLI.
+
+## Speed: rate, concurrency and timeout
+
+- **Rate** caps how many probes *start* per second across the whole run (default 50/s).
+- **Concurrency** caps how many are *in flight* at once (default 100).
+- **Timeout** is how long one probe may wait (default 1 s).
+
+**The rate limit usually sets the pace.** At 50 starts/s, 762 probes (a /24 × 3 ports) need at least (762 − 1) / 50 ≈ 15.2 s, however high concurrency is set.
+
+**Concurrency only becomes the bottleneck when probes time out.** Each silent probe holds a slot for the full timeout. With all of them timing out, throughput is at most concurrency / timeout. The defaults keep 100 slots for 50 starts/s × 1 s, so concurrency is not the limit.
+
+The run's **estimate** reports both figures, the rate-bound minimum and the "every probe times out" duration, and labels them as estimates. Real runs fall in between.
+
+The V1 benchmark measured these effects on a loopback ground-truth fixture: accuracy was 100% at every setting, concurrency above rate × timeout made no difference, and rates above about 200/s inflated measured latency. The tables and limitations are in the [capsule](docs/NetScope_V1_Memory_Capsule.md#phase-8--benchmark-and-tune-done-not-committed).
 
 ## Output and exit codes
 
-- **JSON** carries a metadata envelope (`tool`, `version`, `schema_version`, `command`, settings, UTC timestamps, `duration_ms`, `interrupted`, requested/completed counts), plus results, DNS `target_errors`, and a per-state `summary`.
-- **CSV** has one row per probe.
-  - Scan columns: `target_input, ip, port, state, elapsed_ms, error_code, error_message, started_at`.
-  - Discovery columns: `target_input, ip, host_state, host_elapsed_ms, host_error_code, host_error_message, port, probe_state, probe_elapsed_ms, probe_error_code, probe_error_message, probe_started_at`.
-- **Streams:** JSON/CSV go to stdout or to the `-o` file; logs and progress go to stderr, so output stays pipeable.
-- **Ctrl-C:** stops new work, cancels in-flight probes, emits a partial report of the completed results (`interrupted: true`), and exits `130`. Nothing is invented for probes or hosts that did not finish.
+- **JSON:** a metadata envelope, including the effective settings with `allow_public`/`allow_shared`, UTC timestamps and the `interrupted` flag, plus results, DNS target errors and a per-state summary.
+- **CSV:** one row per probe. The column lists are in the [User Guide](docs/USER_GUIDE.md).
+- **Web exports:** the same JSON and CSV, rebuilt from stored results.
+- **Ctrl-C:** the CLI stops, emits every completed result, marks the report partial, and exits `130`.
 
 | Code | Meaning |
 |---|---|
-| `0` | Completed. Closed ports, inconclusive probes and `no_response` hosts are valid observations. |
-| `1` | Completed, but at least one result is `error` (probe error, host error, or DNS failure). |
+| `0` | Completed normally. |
+| `1` | Completed, but at least one result is `error` (including a DNS failure). |
 | `2` | Invalid arguments, configuration, or scope rejection. Nothing was probed. |
 | `3` | Unexpected internal failure. |
 | `130` | Interrupted by Ctrl-C; partial report emitted. |
 
-## Library use
-
-The engine has no dependency on Typer or Rich, so a future API can call it directly:
-
-```python
-import asyncio
-from netscope.config import ScanConfig, DiscoveryConfig
-from netscope.scanner import scan_ports
-from netscope.discovery import discover_hosts
-
-report = asyncio.run(scan_ports(ScanConfig(target="127.0.0.1", ports="22,80", authorized=True)))
-print(report.model_dump_json(indent=2))
-```
-
-To keep partial results on cancellation, use `prepare_scan`, then `run_scan(plan, on_result=results.append)`, then `build_scan_report` (or the `discovery` equivalents). `on_result` is called synchronously as each probe finishes, so no completed result is lost. `iter_scan`/`iter_discovery` stream results as an async iterator, but drop anything not yet consumed when cancelled.
-
 ## Architecture
 
 ```text
-src/netscope/
-├── cli.py              # Typer commands, preflight wiring, exit codes
-├── console.py          # Rich tables (CLI only)
-├── logging_config.py   # stderr logging
-├── config.py           # port/target/CIDR parsing, Pydantic configs
-├── guardrails.py       # address table, host cap, allowlist, preflight order
-├── models.py           # Pydantic result and report models
-├── resolver.py         # IPv4-only DNS behind an injectable seam
-├── probe.py            # one TCP connect + classification (+ Windows mitigation)
-├── rate_limit.py       # scan-wide probe-start limiter
-├── scheduler.py        # fixed worker pool; results yielded as they complete
-├── scanner.py          # scan plan / iterate / report
-├── discovery.py        # discovery plan / iterate / verdicts / report
-└── output.py           # JSON/CSV serialisers, atomic writes
+Browser UI (React)  ──HTTP──▶  FastAPI (api/)  ──▶  job manager (jobs.py)  ──▶  engine  ──▶  TCP probes
+                                     │                       │
+CLI (cli.py) ───────────────────────────────────────────────▶ engine (scanner.py, discovery.py)
+                                     │                       │
+                         scope policy (config.py, guardrails.py)    SQLite history (store.py)
 ```
 
-## Platform notes: Windows refused connections
-
-By default, Windows retries the SYN after receiving a RST, so a connection to a closed port takes about **2 seconds** to report a refusal (measured: 2,036 ms on loopback, 2,079 ms on the LAN). With a 1 s timeout every closed port would look `inconclusive`.
-
-NetScope applies `SIO_TCP_INITIAL_RTO` (no SYN retransmissions) to each probe socket on Windows. With it, refusals report in 0.3 ms on loopback and 10 ms on the LAN. The trade-off is that a single lost SYN is not retried and shows up as `inconclusive`. Report metadata records whether the mitigation was active. Other platforms report refusals immediately and need no mitigation.
+- **One engine, two callers:** the engine (config, guardrails, resolver, probe, rate limiter, scheduler, scanner, discovery, output) knows nothing about HTTP, Rich or the database. The CLI and the API call the same `prepare_*` / `run_*` / `build_*_report` functions.
+- **Where results go:** each completed result is handed over through a synchronous callback the moment it exists, so cancellation never loses finished work.
+- **More detail:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Testing
 
 ```powershell
-python -m pytest            # unit + loopback integration tests
-python -m pytest -m "not integration"   # no real sockets
+python -m pytest                          # engine, CLI, API, job manager, store, contract tests
+python -m pytest -m "not integration"     # skip tests that open real loopback sockets
+cd frontend; npm test                      # UI component tests (Vitest + Testing Library)
+cd frontend; npm run build                 # type-check + production build
 ```
 
-Tests cover:
+- **No automated test scans a public target.** Tests use injected resolvers, scripted connect functions and loopback listeners.
+- **Frontend fixtures are real API responses** (generated by `tools/make_frontend_fixtures.py`), and a Python contract test fails if they drift from the backend models.
 
-- Table-driven parsers and the address policy, run with socket creation forbidden.
-- The classification table: no errno or Windows code ever yields `filtered`.
-- DNS via an injected resolver.
-- The rate limiter on its own.
-- In-flight and task-count bounds across a /24.
-- Discovery verdicts, including mixed timeout + error.
-- A spy proving no probe socket opens before preflight passes.
-- ANSI-free JSON from a real subprocess.
-- Ctrl-C partial reports, from the engine up to a real SIGINT in a subprocess.
+## Platform notes
 
-On Windows, `tools/windows_console_ctrl_c.py` delivers a genuine console `CTRL_C_EVENT` to running scans as a manual check.
+- **Windows refusal delay:** by default, Windows retries the SYN after a RST, so refused ports take about 2 s. NetScope disables that per probe socket (`SIO_TCP_INITIAL_RTO`), and refusals then report in milliseconds. A single lost SYN is then not retried and shows up as `inconclusive`.
+- **Windows timer resolution:** on Python 3.11/3.12, asyncio's clock ticks every 15.6 ms, so timeouts and rate slots can fire up to about 31 ms early. Over a whole run the rate is still exact.
+- **Linux and macOS** report refusals immediately and need no mitigation.
 
-## Benchmarks
+## Not included
 
-`benchmarks/bench.py` runs a ground-truth fixture on loopback:
+These are out of scope:
+- IPv6
+- banner grabbing / service detection
+- raw-packet (SYN) scanning, ICMP or ARP discovery
+- retries or baselines that could justify `filtered`
+- user accounts, multi-user or remote deployment
+- distributed workers
+- durable job queues
 
-- 60 real listeners
-- 80 refused ports
-- 50 simulated drops
-- 10 simulated local errors
+## Documentation
 
-It sweeps concurrency × rate, with a warm-up and 3 measured runs per setting. Ground truth is written before scanning.
+- [User Guide](docs/USER_GUIDE.md): CLI and web UI, step by step.
+- [Architecture](docs/ARCHITECTURE.md): layers, data flow, job lifecycle, persistence.
+- [Security and scope](docs/SECURITY.md): policy, ordering, server hardening, limitations.
+- [API](docs/API.md): the HTTP contract.
+- [Development](docs/DEVELOPMENT.md): running each component, tests, fixtures, CI.
+- [Design log](docs/NetScope_V1_Memory_Capsule.md): the original V1 specification, measurements and decision history.
 
-Results on Windows 11 / Python 3.12:
+## License
 
-- **Accuracy was 100%** with 0 false `filtered` in every configuration.
-- Without the Windows mitigation, accuracy fell to 60%, because every closed port became `inconclusive`.
-- **Concurrency** stops mattering once it reaches about rate × timeout (50 at the defaults): 50, 100 and 200 measured the same, while 10 was a bottleneck.
-- **Throughput** follows the rate cap up to about 1,000 probes/s. Above about 200/s, NetScope's own bursts inflate the measured latency.
+**No license has been chosen yet.** Until the repository owner adds one, default copyright applies and others have no license to reuse the code. This is an open owner decision.
 
-The defaults (timeout 1 s, concurrency 100, rate 50/s) were kept on that evidence. The rate stays conservative because loopback cannot measure impact on real targets. Full tables and limitations are in the [capsule](docs/NetScope_V1_Memory_Capsule.md#phase-8--benchmark-and-tune-done-not-committed).
-
-Benchmarks only ever target local fixtures or authorized lab hosts.
-
-## Not in V1
-
-IPv6, banner grabbing/service detection, SYN or other raw-packet scanning, ICMP/ARP discovery, retries or baselines that would justify a `filtered` state, and a FastAPI service (the engine is ready to be wrapped).
-
-## Acknowledgements and licensing note
-
-NetScope was conceptually inspired by the beginner `simple-port-scanner` project in `CarterPerez-dev/Cybersecurity-Projects`, which is licensed AGPL-3.0. NetScope does not copy its code, and any future reuse would require reviewing and complying with that license. Conceptual inspiration is not permission to copy code.
+NetScope was conceptually inspired by the beginner `simple-port-scanner` project in `CarterPerez-dev/Cybersecurity-Projects` (AGPL-3.0). No code was copied from it. That project's license does not determine NetScope's.
