@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { AddressResults, HostResult, PortResult } from "../types";
 import { StateBadge } from "./common";
+import { Icon } from "./Icon";
 
 type PortSort = "address" | "state" | "time";
 
@@ -26,7 +27,8 @@ export function PortResultsTable({ items }: { items: AddressResults[] }) {
   return (
     <div className="table-wrap">
       <div className="table-tools">
-        <label>
+        <label className="inline-control">
+          <Icon name="sliders" />
           Sort by{" "}
           <select value={sort} onChange={(e) => setSort(e.target.value as PortSort)} aria-label="Sort port results">
             <option value="address">Address, port</option>

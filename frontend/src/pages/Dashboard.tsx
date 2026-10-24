@@ -1,9 +1,11 @@
 import { api } from "../api";
-import { Alert, EmptyState, Loading, StatusBadge } from "../components/common";
+import { Alert, EmptyState, Loading, PageHeader, STATUS_TONES, StatusBadge } from "../components/common";
+import { Distribution } from "../components/Distribution";
+import { Icon, type IconName } from "../components/Icon";
 import { formatTime, kindLabel, shortId } from "../format";
 import { useResource } from "../hooks";
 import { href } from "../router";
-import type { Page, Scan, Stats } from "../types";
+import { SCAN_STATUSES, type Page, type Scan, type Stats } from "../types";
 
 interface DashboardData {
   stats: Stats;
@@ -11,6 +13,13 @@ interface DashboardData {
 }
 
 const RECENT = 8;
+const STATUS_LABELS: Record<string, string> = {
+  queued: "Queued",
+  running: "Running",
+  completed: "Completed",
+  cancelled: "Cancelled",
+  failed: "Failed",
+};
 
 export function Dashboard() {
   const { data, error, loading } = useResource<DashboardData>(
@@ -28,33 +37,68 @@ export function Dashboard() {
 
   const { stats, recent } = data;
   const s = stats.by_status;
-  const cards = [
-    { label: "Stored scans", value: stats.total },
-    { label: "Completed", value: s.completed },
-    { label: "Running / queued", value: s.running + s.queued },
-    { label: "Cancelled / failed", value: s.cancelled + s.failed },
+  const active = s.running + s.queued;
+  const cards: { label: string; value: number; icon: IconName; tone: string; live?: boolean }[] = [
+    { label: "Stored scans", value: stats.total, icon: "database", tone: "tone-accent" },
+    { label: "Completed", value: s.completed, icon: "checkCircle", tone: "tone-success" },
+    { label: "Running / queued", value: active, icon: "activity", tone: "tone-info", live: s.running > 0 },
+    { label: "Cancelled / failed", value: s.cancelled + s.failed, icon: "alert", tone: "tone-caution" },
   ];
 
   return (
     <section>
-      <div className="page-head">
-        <h1>Dashboard</h1>
-        <a className="button primary" href={href({ page: "new" })}>
-          New scan
-        </a>
-      </div>
+      <PageHeader
+        eyebrow="Overview"
+        title="Dashboard"
+        actions={
+          <a className="button primary" href={href({ page: "new" })}>
+            <Icon name="plus" />
+            New scan
+          </a>
+        }
+      />
       <div className="cards">
         {cards.map((c) => (
-          <div className="card" key={c.label}>
-            <div className="card-value" data-testid={`stat-${c.label}`}>
-              {c.value}
+          <div className={`card stat ${c.tone}`} key={c.label}>
+            <span className="stat-icon">
+              <Icon name={c.icon} />
+            </span>
+            <div>
+              <div className="card-value" data-testid={`stat-${c.label}`}>
+                {c.value}
+              </div>
+              <div className="card-label">
+                {c.label}
+                {c.live ? <span className="live-dot" title="A scan is running" aria-hidden="true" /> : null}
+              </div>
             </div>
-            <div className="card-label">{c.label}</div>
           </div>
         ))}
       </div>
 
-      <h2>Recent scans</h2>
+      {stats.total > 0 ? (
+        <div className="panel glass">
+          <Distribution
+            title="Stored scans by status"
+            unit="scans"
+            segments={SCAN_STATUSES.map((status) => ({
+              key: status,
+              label: STATUS_LABELS[status] ?? status,
+              value: s[status],
+              tone: STATUS_TONES[status],
+            }))}
+          />
+        </div>
+      ) : null}
+
+      <div className="section-head">
+        <h2>Recent scans</h2>
+        {recent.total > RECENT ? (
+          <a className="link-more" href={href({ page: "history" })}>
+            View all {recent.total} scans <Icon name="chevronRight" />
+          </a>
+        ) : null}
+      </div>
       {recent.items.length === 0 ? (
         <EmptyState title="No scans yet">
           <p className="muted">
@@ -65,11 +109,6 @@ export function Dashboard() {
       ) : (
         <ScanTable scans={recent.items} />
       )}
-      {recent.total > RECENT ? (
-        <p>
-          <a href={href({ page: "history" })}>View all {recent.total} scans →</a>
-        </p>
-      ) : null}
     </section>
   );
 }
@@ -92,20 +131,25 @@ export function ScanTable({ scans }: { scans: Scan[] }) {
           {scans.map((scan) => (
             <tr key={scan.id}>
               <td>
-                <a className="mono" href={href({ page: "scan", id: scan.id })}>
+                <a className="mono target-link" href={href({ page: "scan", id: scan.id })}>
                   {scan.target}
                 </a>
               </td>
-              <td>{kindLabel(scan.kind)}</td>
+              <td>
+                <span className="kind">
+                  <Icon name={scan.kind === "discover" ? "network" : "server"} />
+                  {kindLabel(scan.kind)}
+                </span>
+              </td>
               <td>
                 <StatusBadge status={scan.status} partial={scan.partial} />
               </td>
-              <td className="small">
+              <td className="small mono">
                 {scan.progress.completed}
-                {scan.progress.determinate ? ` / ${scan.progress.total}` : ""} {scan.progress.unit}
+                {scan.progress.determinate ? ` / ${scan.progress.total}` : ""} <span className="muted">{scan.progress.unit}</span>
               </td>
-              <td className="small">{formatTime(scan.created_at)}</td>
-              <td className="mono small">{shortId(scan.id)}</td>
+              <td className="small mono muted">{formatTime(scan.created_at)}</td>
+              <td className="mono small muted">{shortId(scan.id)}</td>
             </tr>
           ))}
         </tbody>

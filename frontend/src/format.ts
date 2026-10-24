@@ -28,6 +28,26 @@ export function formatSeconds(seconds: number): string {
   return `${(seconds / 60).toFixed(1)} min`;
 }
 
+/** Display-only: collapse consecutive ports into ranges ("1-1024, 8080") and cap the length. */
+export function formatPorts(ports: number[], maxParts = 12): string {
+  const sorted = [...ports].sort((a, b) => a - b);
+  const parts: string[] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (const port of sorted.slice(1).concat(Number.NaN)) {
+    if (start === undefined || prev === undefined) break;
+    if (port === prev + 1) {
+      prev = port;
+      continue;
+    }
+    parts.push(start === prev ? String(start) : `${start}-${prev}`);
+    start = port;
+    prev = port;
+  }
+  if (parts.length <= maxParts) return parts.join(", ");
+  return `${parts.slice(0, maxParts).join(", ")}, … (+${parts.length - maxParts} more)`;
+}
+
 export function shortId(id: string): string {
   return id.slice(0, 8);
 }

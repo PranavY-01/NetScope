@@ -27,6 +27,18 @@ describe("Dashboard", () => {
     render(<Dashboard />);
     expect(await screen.findByText("No scans yet")).toBeInTheDocument();
     expect(screen.getByTestId("stat-Stored scans")).toHaveTextContent("0");
+    expect(screen.queryByRole("img", { name: /Stored scans by status/ })).not.toBeInTheDocument();
+  });
+
+  it("charts the real status counts", async () => {
+    mockFetch({ "GET /api/stats": { body: stats }, "GET /api/scans": { body: scans } });
+    render(<Dashboard />);
+    const s = stats.by_status;
+    const expected = (["queued", "running", "completed", "cancelled", "failed"] as const)
+      .filter((k) => s[k] > 0)
+      .map((k) => `${k[0]!.toUpperCase()}${k.slice(1)} ${s[k]}`)
+      .join(", ");
+    expect(await screen.findByRole("img", { name: `Stored scans by status: ${expected}` })).toBeInTheDocument();
   });
 
   it("shows a loading state, then an error if the server is unreachable", async () => {

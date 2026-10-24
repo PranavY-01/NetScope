@@ -1,6 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { api, ApiError } from "../api";
-import { Alert } from "../components/common";
+import { Alert, PageHeader } from "../components/common";
+import { Icon } from "../components/Icon";
 import { useResource } from "../hooks";
 import { navigate } from "../router";
 import type { Limits, ScanCreate, ScanKind } from "../types";
@@ -145,44 +146,63 @@ export function NewScan() {
 
   return (
     <section>
-      <div className="page-head">
-        <h1>New scan</h1>
-      </div>
-      <form className="form" onSubmit={onSubmit} noValidate>
-        <fieldset>
-          <legend>Type</legend>
-          <div className="segmented" role="radiogroup" aria-label="Scan type">
-            <label className={isScan ? "active" : ""}>
-              <input type="radio" name="kind" checked={isScan} onChange={() => set("kind", "scan")} /> Port scan (one host)
-            </label>
-            <label className={!isScan ? "active" : ""}>
-              <input type="radio" name="kind" checked={!isScan} onChange={() => set("kind", "discover")} /> Host discovery (CIDR)
-            </label>
-          </div>
-        </fieldset>
+      <PageHeader eyebrow="Configure" title="New scan" />
+      <form className="scan-form" onSubmit={onSubmit} noValidate>
+        <div className="form-main">
+          <fieldset className="form-section">
+            <legend>
+              <span className="step mono">01</span> Scan type
+            </legend>
+            <div className="kind-cards" role="radiogroup" aria-label="Scan type">
+              <label className={`kind-card${isScan ? " active" : ""}`}>
+                <input type="radio" name="kind" checked={isScan} onChange={() => set("kind", "scan")} />
+                <Icon name="server" className="kind-icon" />
+                <span className="kind-text">
+                  <span className="kind-title">Port scan (one host)</span>
+                  <span className="kind-desc">TCP connect probes against one address or hostname.</span>
+                </span>
+              </label>
+              <label className={`kind-card${!isScan ? " active" : ""}`}>
+                <input type="radio" name="kind" checked={!isScan} onChange={() => set("kind", "discover")} />
+                <Icon name="network" className="kind-icon" />
+                <span className="kind-text">
+                  <span className="kind-title">Host discovery (CIDR)</span>
+                  <span className="kind-desc">Probe every host in a range and record per-probe evidence.</span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
 
-        <Field label={isScan ? "Target (IPv4 address or hostname)" : "Network (IPv4 CIDR)"} error={errors.target} htmlFor="target">
-          <input
-            id="target"
-            className="mono"
-            value={form.target}
-            placeholder={isScan ? "127.0.0.1 or host.lan" : "192.168.1.0/24"}
-            onChange={(e) => set("target", e.target.value)}
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </Field>
-        <Field
-          label={isScan ? "Ports" : "Probe ports (checked on every host)"}
-          error={errors.ports}
-          htmlFor="ports"
-          hint="Single ports, lists and ranges. Invalid specs are rejected, never widened."
-        >
-          <input id="ports" className="mono" value={form.ports} onChange={(e) => set("ports", e.target.value)} spellCheck={false} />
-        </Field>
+          <fieldset className="form-section">
+            <legend>
+              <span className="step mono">02</span> {isScan ? "Address and ports" : "Range and probe ports"}
+            </legend>
+            <Field label={isScan ? "Target (IPv4 address or hostname)" : "Network (IPv4 CIDR)"} error={errors.target} htmlFor="target">
+              <input
+                id="target"
+                className="mono"
+                value={form.target}
+                placeholder={isScan ? "127.0.0.1 or host.lan" : "192.168.1.0/24"}
+                onChange={(e) => set("target", e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </Field>
+            <Field
+              label={isScan ? "Ports" : "Probe ports (checked on every host)"}
+              error={errors.ports}
+              htmlFor="ports"
+              hint="Single ports, lists and ranges. Invalid specs are rejected, never widened."
+            >
+              <input id="ports" className="mono" value={form.ports} onChange={(e) => set("ports", e.target.value)} spellCheck={false} />
+            </Field>
+          </fieldset>
 
-        <details className="advanced">
-          <summary>Timing and limits</summary>
+        <details className="advanced form-section">
+          <summary>
+            <span className="step mono">03</span> Timing and limits
+            <Icon name="chevronDown" className="chevron" />
+          </summary>
           <div className="grid-4">
             <Field label="Timeout (s)" error={errors.timeout} htmlFor="timeout">
               <input id="timeout" type="number" step="0.1" min={0} max={limits.max_timeout_s} value={form.timeout} onChange={(e) => set("timeout", e.target.value)} />
@@ -203,69 +223,89 @@ export function NewScan() {
           </p>
         </details>
 
-        <fieldset>
-          <legend>Scope</legend>
-          <label className="check">
-            <input type="checkbox" checked={form.allowPublic} onChange={(e) => set("allowPublic", e.target.checked)} />
-            Allow public (globally routable) addresses
-          </label>
-          <label className="check">
-            <input type="checkbox" checked={form.allowShared} onChange={(e) => set("allowShared", e.target.checked)} />
-            Allow shared address space 100.64.0.0/10 (carrier-grade NAT; may belong to other ISP customers)
-          </label>
-          <p className="muted small">
-            Each override covers only its own range. Loopback and private ranges need neither; link-local, multicast, reserved and
-            documentation ranges are always refused.
-          </p>
-          <Field label="Allowlist (optional)" error={errors.allowlist} htmlFor="allowlist" hint="One IPv4 address or CIDR per line. Any target outside it rejects the whole scan.">
-            <textarea id="allowlist" className="mono" rows={3} value={form.allowlist} onChange={(e) => set("allowlist", e.target.value)} spellCheck={false} />
-          </Field>
-        </fieldset>
+          <fieldset className="form-section scope">
+            <legend>
+              <span className="step mono">04</span> Scope
+            </legend>
+            <p className="scope-note small">
+              <Icon name="alert" />
+              Overrides widen what may be scanned. Enable one only for addresses you are authorized to test.
+            </p>
+            <label className={`check override${form.allowPublic ? " on" : ""}`}>
+              <input type="checkbox" checked={form.allowPublic} onChange={(e) => set("allowPublic", e.target.checked)} />
+              <span>Allow public (globally routable) addresses</span>
+            </label>
+            <label className={`check override${form.allowShared ? " on" : ""}`}>
+              <input type="checkbox" checked={form.allowShared} onChange={(e) => set("allowShared", e.target.checked)} />
+              <span>Allow shared address space 100.64.0.0/10 (carrier-grade NAT; may belong to other ISP customers)</span>
+            </label>
+            <p className="muted small">
+              Each override covers only its own range. Loopback and private ranges need neither; link-local, multicast, reserved and
+              documentation ranges are always refused.
+            </p>
+            <Field label="Allowlist (optional)" error={errors.allowlist} htmlFor="allowlist" hint="One IPv4 address or CIDR per line. Any target outside it rejects the whole scan.">
+              <textarea id="allowlist" className="mono" rows={3} value={form.allowlist} onChange={(e) => set("allowlist", e.target.value)} spellCheck={false} />
+            </Field>
+          </fieldset>
 
-        <fieldset className={errors.authorized ? "invalid" : ""}>
-          <legend>Authorization</legend>
-          <label className="check">
-            <input type="checkbox" checked={form.authorized} onChange={(e) => set("authorized", e.target.checked)} />I own every target
-            or am explicitly authorized to test it.
-          </label>
-          {errors.authorized ? <p className="field-error">{errors.authorized}</p> : null}
-        </fieldset>
-
-        <div className="preview">
-          <h2>Effective settings</h2>
-          <dl className="kv">
-            <dt>Type</dt>
-            <dd>{isScan ? "Port scan" : "Host discovery"}</dd>
-            <dt>Target</dt>
-            <dd className="mono">{preview.target || "—"}</dd>
-            <dt>Ports</dt>
-            <dd className="mono">{preview.ports}</dd>
-            <dt>Timeout / concurrency / rate</dt>
-            <dd>
-              {preview.timeout}s / {preview.concurrency} / {preview.rate} per s
-            </dd>
-            <dt>Host cap</dt>
-            <dd>{preview.max_hosts}</dd>
-            <dt>Overrides</dt>
-            <dd>{[preview.allow_public && "public", preview.allow_shared && "shared"].filter(Boolean).join(", ") || "none"}</dd>
-            <dt>Allowlist</dt>
-            <dd>{preview.allowlist ? `${preview.allowlist.length} entries` : "not used"}</dd>
-          </dl>
-          <p className="muted small">The server validates these again and shows the final effective settings on the scan page.</p>
+          <fieldset className={`form-section authorization${errors.authorized ? " invalid" : ""}${form.authorized ? " confirmed" : ""}`}>
+            <legend>
+              <span className="step mono">05</span> Authorization
+            </legend>
+            <label className="check auth-check">
+              <input type="checkbox" checked={form.authorized} onChange={(e) => set("authorized", e.target.checked)} />
+              <Icon name="shieldCheck" className="auth-icon" />
+              <span>I own every target or am explicitly authorized to test it.</span>
+            </label>
+            {errors.authorized ? <p className="field-error">{errors.authorized}</p> : null}
+          </fieldset>
         </div>
 
-        {serverError ? (
-          <Alert kind="error" title="The server rejected this scan">
-            <p>{serverError.message}</p>
-            <p className="mono small">{serverError.code}</p>
-          </Alert>
-        ) : null}
+        <aside className="form-side">
+          <div className="readout">
+            <div className="readout-head">
+              <Icon name="terminal" />
+              <h2>Effective settings</h2>
+            </div>
+            <dl className="kv readout-body">
+              <dt>type</dt>
+              <dd>{isScan ? "Port scan" : "Host discovery"}</dd>
+              <dt>target</dt>
+              <dd className="mono">{preview.target || "—"}</dd>
+              <dt>ports</dt>
+              <dd className="mono">{preview.ports}</dd>
+              <dt>timeout</dt>
+              <dd className="mono">{preview.timeout} s</dd>
+              <dt>concurrency</dt>
+              <dd className="mono">{preview.concurrency}</dd>
+              <dt>rate</dt>
+              <dd className="mono">{preview.rate} probe starts/s</dd>
+              <dt>host cap</dt>
+              <dd className="mono">{preview.max_hosts}</dd>
+              <dt>overrides</dt>
+              <dd className={preview.allow_public || preview.allow_shared ? "warn-text" : undefined}>
+                {[preview.allow_public && "public", preview.allow_shared && "shared"].filter(Boolean).join(", ") || "none"}
+              </dd>
+              <dt>allowlist</dt>
+              <dd>{preview.allowlist ? `${preview.allowlist.length} entries` : "not used"}</dd>
+              <dt>authorized</dt>
+              <dd className={preview.authorized ? "ok-text" : "warn-text"}>{preview.authorized ? "confirmed" : "not confirmed"}</dd>
+            </dl>
+            <p className="readout-note muted small">The server validates these again and shows the final effective settings on the scan page.</p>
+          </div>
 
-        <div className="actions">
-          <button className="button primary" type="submit" disabled={submitting}>
+          {serverError ? (
+            <Alert kind="error" title="The server rejected this scan">
+              <p>{serverError.message}</p>
+              <p className="mono small">{serverError.code}</p>
+            </Alert>
+          ) : null}
+
+          <button className="button primary block" type="submit" disabled={submitting}>
+            {submitting ? <span className="spinner" aria-hidden="true" /> : <Icon name="radar" />}
             {submitting ? "Starting…" : "Start scan"}
           </button>
-        </div>
+        </aside>
       </form>
     </section>
   );
@@ -276,7 +316,7 @@ function Field(props: { label: string; htmlFor: string; error?: string; hint?: s
     <div className={`field${props.error ? " invalid" : ""}`}>
       <label htmlFor={props.htmlFor}>{props.label}</label>
       {props.children}
-      {props.hint ? <p className="muted small">{props.hint}</p> : null}
+      {props.hint ? <p className="hint muted small">{props.hint}</p> : null}
       {props.error ? <p className="field-error">{props.error}</p> : null}
     </div>
   );
