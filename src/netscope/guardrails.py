@@ -17,6 +17,7 @@ _MAX_LISTED = 5
 class AddressClass(StrEnum):
     LOOPBACK = "loopback"
     PRIVATE = "private"
+    SHARED = "shared"
     PUBLIC = "public"
     LINK_LOCAL = "link_local"
     MULTICAST = "multicast"
@@ -42,7 +43,9 @@ ADDRESS_TABLE: tuple[RangeRule, ...] = tuple(
         ("10.0.0.0/8", AddressClass.PRIVATE, "private (RFC 1918)"),
         ("172.16.0.0/12", AddressClass.PRIVATE, "private (RFC 1918)"),
         ("192.168.0.0/16", AddressClass.PRIVATE, "private (RFC 1918)"),
-        ("100.64.0.0/10", AddressClass.PRIVATE, "shared address space (RFC 6598)"),
+        # Carrier-grade NAT space: other customers of the same ISP can sit here, so it is not
+        # treated as "your" private network and needs its own explicit override.
+        ("100.64.0.0/10", AddressClass.SHARED, "shared address space / CGNAT (RFC 6598)"),
         ("169.254.0.0/16", AddressClass.LINK_LOCAL, "link-local (RFC 3927)"),
         ("224.0.0.0/4", AddressClass.MULTICAST, "multicast (RFC 5771)"),
         ("255.255.255.255/32", AddressClass.BROADCAST, "limited broadcast (RFC 919)"),
@@ -58,7 +61,8 @@ ADDRESS_TABLE: tuple[RangeRule, ...] = tuple(
 
 _PUBLIC_LABEL = "globally routable"
 ALLOWED_CLASSES = frozenset({AddressClass.LOOPBACK, AddressClass.PRIVATE})
-OVERRIDABLE_CLASSES = frozenset({AddressClass.PUBLIC})
+# Each overridable class has its own flag; one override never implies another.
+OVERRIDABLE_CLASSES = frozenset({AddressClass.PUBLIC, AddressClass.SHARED})
 
 
 class ScopeError(Exception):
@@ -112,22 +116,33 @@ def _listed(items: Sequence[str]) -> str:
     return shown
 
 
-def check_address_policy(ips: Iterable[IPv4Address], allow_public: bool) -> None:
+def check_address_policy(ips: Iterable[IPv4Address], allow_public: bool, allow_shared: bool = False) -> None:
+    """Reject special-purpose addresses outright; public and shared space each need their own override."""
     forbidden: list[str] = []
     public: list[str] = []
+    shared: list[str] = []
     for ip in ips:
         address_class, label = classify_address(ip)
         if address_class in ALLOWED_CLASSES:
             continue
-        if address_class in OVERRIDABLE_CLASSES:
+        if address_class is AddressClass.PUBLIC:
             if not allow_public:
                 public.append(str(ip))
+        elif address_class is AddressClass.SHARED:
+            if not allow_shared:
+                shared.append(str(ip))
         else:
             forbidden.append(f"{ip} ({label})")
     if forbidden:
         raise ScopeError(
             "special_address",
-            f"special-purpose addresses cannot be scanned in V1: {_listed(forbidden)}",
+            f"special-purpose addresses cannot be scanned: {_listed(forbidden)}",
+        )
+    if shared:
+        raise ScopeError(
+            "shared_address",
+            "shared address space (100.64.0.0/10, carrier-grade NAT) can belong to other ISP "
+            f"customers and requires --allow-shared: {_listed(shared)}",
         )
     if public:
         raise ScopeError(
@@ -177,8 +192,9 @@ def check_authorized(authorized: bool) -> None:
     if not authorized:
         raise ScopeError(
             "not_authorized",
-            "active scanning requires --yes-authorized to confirm you own or are "
-            "explicitly authorized to test every target",
+            "active scanning requires an explicit authorization acknowledgement (--yes-authorized on the "
+            "command line, the authorization checkbox in the web UI) confirming you own or are explicitly "
+            "authorized to test every target",
         )
 
 
@@ -190,9 +206,14 @@ def preflight_addresses(
     allowlist: Sequence[IPv4Network] | None,
     authorized: bool,
     what: str,
+    allow_shared: bool = False,
 ) -> None:
-    """Capsule §7.5 steps 3-6 on a concrete address list, in order."""
+    """Scope checks on a concrete address list, in order: cap, address policy, allowlist, acknowledgement.
+
+    Callers that resolve names must call check_authorized() before resolving (see prepare_scan); the
+    acknowledgement is re-checked here so this function is safe on its own.
+    """
     enforce_host_cap(len(ips), max_hosts, what)
-    check_address_policy(ips, allow_public)
+    check_address_policy(ips, allow_public, allow_shared)
     check_allowlist(ips, allowlist)
     check_authorized(authorized)

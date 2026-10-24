@@ -32,8 +32,10 @@ POLICY_TABLE = [
     ("172.16.0.1", A.PRIVATE, True, True),
     ("172.31.255.254", A.PRIVATE, True, True),
     ("192.168.1.1", A.PRIVATE, True, True),
-    ("100.64.0.1", A.PRIVATE, True, True),
-    ("100.127.255.254", A.PRIVATE, True, True),
+    # Contract change in V2 (review finding 6.1): shared address space was classed as private and
+    # allowed. It is now its own class, blocked unless --allow-shared; --allow-public does not cover it.
+    ("100.64.0.1", A.SHARED, False, False),
+    ("100.127.255.254", A.SHARED, False, False),
     ("8.8.8.8", A.PUBLIC, False, True),
     ("1.1.1.1", A.PUBLIC, False, True),
     ("172.15.255.255", A.PUBLIC, False, True),
@@ -105,6 +107,45 @@ def test_special_rejection_wins_over_public_and_names_the_range():
         check_address_policy([IPv4Address("8.8.8.8"), IPv4Address("169.254.1.1")], allow_public=False)
     assert info.value.code == "special_address"
     assert "link-local" in info.value.message
+
+
+SHARED_SAMPLES = ["100.64.0.0", "100.64.0.1", "100.100.100.100", "100.127.255.255"]
+
+
+@pytest.mark.parametrize("addr", SHARED_SAMPLES)
+def test_shared_space_needs_its_own_override(addr):
+    ip = IPv4Address(addr)
+    assert classify_address(ip)[0] is A.SHARED
+    for allow_public in (False, True):
+        with pytest.raises(ScopeError) as info:
+            check_address_policy([ip], allow_public=allow_public, allow_shared=False)
+        assert info.value.code == "shared_address"
+        assert "--allow-shared" in info.value.message
+    check_address_policy([ip], allow_public=False, allow_shared=True)
+
+
+@pytest.mark.parametrize("addr", ["100.63.255.255", "100.128.0.0"])
+def test_shared_space_boundaries_are_public(addr):
+    assert classify_address(IPv4Address(addr))[0] is A.PUBLIC
+
+
+def test_allow_shared_does_not_authorize_public_or_special():
+    for addr, code in [("8.8.8.8", "public_target"), ("169.254.1.1", "special_address"), ("224.0.0.1", "special_address")]:
+        with pytest.raises(ScopeError) as info:
+            check_address_policy([IPv4Address(addr)], allow_public=False, allow_shared=True)
+        assert info.value.code == code
+
+
+def test_allow_shared_never_bypasses_other_checks():
+    for overrides, code in [
+        (dict(max_hosts=1), "host_cap"),
+        (dict(allowlist=(IPv4Network("10.0.0.0/8"),)), "allowlist"),
+        (dict(authorized=False), "not_authorized"),
+    ]:
+        with pytest.raises(ScopeError) as info:
+            _preflight(["100.64.0.1", "100.64.0.2"], allow_shared=True, **overrides)
+        assert info.value.code == code
+    _preflight(["100.64.0.1"], allow_shared=True, allowlist=(IPv4Network("100.64.0.0/24"),))
 
 
 def test_public_rejection_code():
