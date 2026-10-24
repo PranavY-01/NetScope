@@ -10,3 +10,10 @@ dist/
 htmlcov/
 benchmarks/results/*.json
 !benchmarks/results/.gitkeep
+
+# Web application (V2)
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+*.tsbuildinfo
