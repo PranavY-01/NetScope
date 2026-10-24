@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { api, ApiError } from "../api";
-import { Alert, Loading, ProgressBar, StateBadge, StatusBadge } from "../components/common";
+import { Alert, Loading, PageHeader, ProgressBar, STATE_TONES, StateBadge, StatusBadge } from "../components/common";
+import { Distribution } from "../components/Distribution";
+import { Icon } from "../components/Icon";
 import { HostResultsTable, PortResultsTable } from "../components/ResultsTables";
-import { formatDuration, formatSeconds, formatTime, kindLabel } from "../format";
+import { formatDuration, formatPorts, formatSeconds, formatTime, kindLabel } from "../format";
 import { useResource } from "../hooks";
 import { href, navigate } from "../router";
 import { ACTIVE_STATUSES, type ResultsPage, type Scan } from "../types";
@@ -11,6 +13,14 @@ const PAGE = 100;
 const POLL_MS = 1000;
 
 const isActive = (scan: Scan | null) => !!scan && ACTIVE_STATUSES.includes(scan.status);
+
+const STATE_ORDER = ["open", "responsive", "closed", "inconclusive", "no_response", "filtered", "error"];
+
+/** The scan's real summary counts in a stable, meaningful order (unknown states last). */
+function orderedStates(scan: Scan): [string, number][] {
+  const rank = (key: string) => (STATE_ORDER.includes(key) ? STATE_ORDER.indexOf(key) : STATE_ORDER.length);
+  return Object.entries(scan.summary).sort(([a], [b]) => rank(a) - rank(b));
+}
 
 export function ScanDetail({ id }: { id: string }) {
   const scanResource = useResource(() => api.getScan(id), [id], { pollMs: POLL_MS, poll: isActive });
@@ -72,42 +82,52 @@ export function ScanDetail({ id }: { id: string }) {
 
   return (
     <section>
-      <div className="page-head">
-        <div>
-          <p className="muted small">{kindLabel(scan.kind)}</p>
-          <h1 className="mono">{scan.target}</h1>
-        </div>
-        <div className="actions">
-          {active ? (
-            <button className="button danger" onClick={onCancel} disabled={cancelling}>
-              {cancelling ? "Cancelling…" : "Cancel scan"}
-            </button>
-          ) : null}
-          {scan.exportable ? (
-            <>
-              <a className="button" href={api.exportUrl(id, "json")} download>
-                Export JSON
-              </a>
-              <a className="button" href={api.exportUrl(id, "csv")} download>
-                Export CSV
-              </a>
-            </>
-          ) : null}
-          {!active ? (
-            <button className="button subtle" onClick={onDelete}>
-              Delete
-            </button>
-          ) : null}
-        </div>
-      </div>
+      <PageHeader
+        eyebrow={
+          <>
+            <Icon name={scan.kind === "discover" ? "network" : "server"} />
+            {kindLabel(scan.kind)}
+          </>
+        }
+        title={scan.target}
+        mono
+        actions={
+          <>
+            {active ? (
+              <button className="button danger" onClick={onCancel} disabled={cancelling}>
+                {cancelling ? <span className="spinner" aria-hidden="true" /> : <Icon name="stop" />}
+                {cancelling ? "Cancelling…" : "Cancel scan"}
+              </button>
+            ) : null}
+            {scan.exportable ? (
+              <>
+                <a className="button" href={api.exportUrl(id, "json")} download>
+                  <Icon name="download" />
+                  Export JSON
+                </a>
+                <a className="button" href={api.exportUrl(id, "csv")} download>
+                  <Icon name="download" />
+                  Export CSV
+                </a>
+              </>
+            ) : null}
+            {!active ? (
+              <button className="button subtle danger-hover" onClick={onDelete}>
+                <Icon name="trash" />
+                Delete
+              </button>
+            ) : null}
+          </>
+        }
+      />
 
       {actionError ? <Alert kind="error" title="Action failed">{actionError.message}</Alert> : null}
       {scanResource.error ? <Alert kind="warning" title="Lost contact with the server; retrying">{scanResource.error.message}</Alert> : null}
 
-      <div className="panel">
+      <div className={`panel glass status-panel status-${scan.status}`}>
         <div className="status-line">
           <StatusBadge status={scan.status} partial={scan.partial} />
-          <span className="mono small muted">id {scan.id}</span>
+          <span className="mono small muted id-line">id {scan.id}</span>
         </div>
         <ProgressBar progress={scan.progress} status={scan.status} />
         <dl className="kv">
@@ -151,13 +171,25 @@ export function ScanDetail({ id }: { id: string }) {
           {Object.keys(scan.summary).length === 0 ? (
             <p className="muted">{active ? "No results yet." : "No results recorded."}</p>
           ) : (
-            <ul className="summary">
-              {Object.entries(scan.summary).map(([key, count]) => (
-                <li key={key}>
-                  <StateBadge state={key} /> <strong>{count}</strong>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="summary">
+                {Object.entries(scan.summary).map(([key, count]) => (
+                  <li key={key}>
+                    <StateBadge state={key} /> <strong className="mono">{count}</strong>
+                  </li>
+                ))}
+              </ul>
+              <Distribution
+                title={scan.kind === "scan" ? "Recorded probes by state" : "Recorded hosts by observation"}
+                unit={scan.progress.unit}
+                segments={orderedStates(scan).map(([key, value]) => ({
+                  key,
+                  label: key.replace("_", " "),
+                  value,
+                  tone: STATE_TONES[key] ?? "tone-neutral",
+                }))}
+              />
+            </>
           )}
           <Interpretation kind={scan.kind} />
         </div>
@@ -170,7 +202,7 @@ export function ScanDetail({ id }: { id: string }) {
       <div className="panel">
         <div className="panel-head">
           <h2>{scan.kind === "scan" ? "Port observations" : "Host observations"}</h2>
-          <label>
+          <label className="inline-control">
             Show{" "}
             <select
               value={state}
@@ -202,13 +234,15 @@ export function ScanDetail({ id }: { id: string }) {
         {page && page.total > PAGE ? (
           <div className="pager">
             <button className="button subtle" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
+              <Icon name="chevronLeft" />
               Previous
             </button>
-            <span className="muted small">
+            <span className="muted small mono">
               {offset + 1}–{Math.min(offset + PAGE, page.total)} of {page.total} {page.kind === "scan" ? "addresses" : "hosts"}
             </span>
             <button className="button subtle" disabled={offset + PAGE >= page.total} onClick={() => setOffset(offset + PAGE)}>
               Next
+              <Icon name="chevronRight" />
             </button>
           </div>
         ) : null}
@@ -242,7 +276,8 @@ function Interpretation({ kind }: { kind: Scan["kind"] }) {
 
 function Settings({ scan }: { scan: Scan }) {
   const s = scan.settings;
-  const list = (value: unknown) => (Array.isArray(value) ? value.join(", ") : String(value ?? "—"));
+  const list = (value: unknown) =>
+    Array.isArray(value) && value.every((v) => typeof v === "number") ? formatPorts(value as number[]) : String(value ?? "—");
   const allowlist = s.allowlist as string[] | null | undefined;
   return (
     <>

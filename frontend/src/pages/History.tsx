@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api";
-import { Alert, EmptyState, Loading } from "../components/common";
+import { Alert, EmptyState, Loading, PageHeader } from "../components/common";
+import { Icon } from "../components/Icon";
 import { useResource } from "../hooks";
 import { href } from "../router";
 import { SCAN_STATUSES, type ScanKind, type ScanStatus } from "../types";
@@ -28,21 +29,28 @@ export function History() {
 
   return (
     <section>
-      <div className="page-head">
-        <h1>Scan history</h1>
-        <a className="button primary" href={href({ page: "new" })}>
-          New scan
-        </a>
-      </div>
+      <PageHeader
+        eyebrow="Records"
+        title="Scan history"
+        actions={
+          <a className="button primary" href={href({ page: "new" })}>
+            <Icon name="plus" />
+            New scan
+          </a>
+        }
+      />
       <div className="filters">
-        <input
-          type="search"
-          placeholder="Search target or id"
-          aria-label="Search history"
-          value={search}
-          maxLength={100}
-          onChange={(e) => reset(() => setSearch(e.target.value))}
-        />
+        <div className="search">
+          <Icon name="search" className="search-icon" />
+          <input
+            type="search"
+            placeholder="Search target or id"
+            aria-label="Search history"
+            value={search}
+            maxLength={100}
+            onChange={(e) => reset(() => setSearch(e.target.value))}
+          />
+        </div>
         <select aria-label="Filter by status" value={status} onChange={(e) => reset(() => setStatus(e.target.value as ScanStatus | ""))}>
           <option value="">Any status</option>
           {SCAN_STATUSES.map((s) => (
@@ -62,7 +70,7 @@ export function History() {
       {loading && !data ? (
         <Loading label="Loading history…" />
       ) : data && data.items.length === 0 ? (
-        <EmptyState title={filtered ? "No scans match these filters" : "No scans yet"}>
+        <EmptyState title={filtered ? "No scans match these filters" : "No scans yet"} icon={filtered ? "search" : "history"}>
           {filtered ? null : (
             <p className="muted">
               <a href={href({ page: "new" })}>Start a scan</a> to build up a history.
@@ -74,13 +82,15 @@ export function History() {
           <ScanTable scans={data.items} />
           <div className="pager">
             <button className="button subtle" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
+              <Icon name="chevronLeft" />
               Previous
             </button>
-            <span className="muted small">
+            <span className="muted small mono">
               {offset + 1}–{Math.min(offset + PAGE, data.total)} of {data.total}
             </span>
             <button className="button subtle" disabled={offset + PAGE >= data.total} onClick={() => setOffset(offset + PAGE)}>
               Next
+              <Icon name="chevronRight" />
             </button>
           </div>
         </>
