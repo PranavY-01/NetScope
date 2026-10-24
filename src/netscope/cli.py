@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
@@ -28,6 +29,8 @@ from netscope.config import (
     ScanConfig,
 )
 from netscope.console import render_discovery, render_scan
+from netscope.estimate import describe as describe_estimate
+from netscope.estimate import estimate_duration
 from netscope.discovery import DiscoveryPlan, build_discovery_report, prepare_discovery, run_discovery
 from netscope.guardrails import ScopeError, load_allowlist
 from netscope.logging_config import NORMAL, QUIET, VERBOSE, configure_logging
@@ -77,6 +80,13 @@ MaxHostsOpt = Annotated[
 AllowPublicOpt = Annotated[
     bool, typer.Option("--allow-public", help="Permit globally routable targets. Never bypasses other checks.")
 ]
+AllowSharedOpt = Annotated[
+    bool,
+    typer.Option(
+        "--allow-shared",
+        help="Permit shared address space 100.64.0.0/10 (carrier-grade NAT). Not implied by --allow-public.",
+    ),
+]
 AllowlistOpt = Annotated[
     Optional[Path],
     typer.Option("--allowlist", help="File of permitted IPv4 addresses/CIDRs; any target outside it rejects the run."),
@@ -116,6 +126,7 @@ class _Job:
     build: Callable[..., ScanReport | DiscoveryReport]
     total: Callable[[Any], int]
     describe: Callable[[Any], str]
+    estimate: Callable[[Any], str]
 
 
 def _err_console() -> Console:
@@ -212,6 +223,7 @@ def _execute(job: _Job, out: _Output) -> int:
 
     total = job.total(plan)
     log.info(job.describe(plan))
+    log.info(job.estimate(plan))
     collected: list = []
     timer = RunTimer()
     interrupted = False
@@ -257,6 +269,12 @@ def _settings_line(config: ScanConfig | DiscoveryConfig) -> str:
     return f"timeout {config.timeout:g}s, concurrency {config.concurrency}, rate {config.rate:g}/s"
 
 
+def _estimate_line(config: ScanConfig | DiscoveryConfig, probes: int) -> str:
+    return describe_estimate(
+        estimate_duration(probes, rate=config.rate, concurrency=config.concurrency, timeout=config.timeout)
+    )
+
+
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(f"netscope {__version__}")
@@ -284,6 +302,7 @@ def scan(
     rate: RateOpt = DEFAULT_RATE_PER_S,
     max_hosts: MaxHostsOpt = DEFAULT_MAX_HOSTS,
     allow_public: AllowPublicOpt = False,
+    allow_shared: AllowSharedOpt = False,
     allowlist: AllowlistOpt = None,
     yes_authorized: AuthorizedOpt = False,
     fmt: FormatOpt = None,
@@ -308,6 +327,7 @@ def scan(
             rate=rate,
             max_hosts=max_hosts,
             allow_public=allow_public,
+            allow_shared=allow_shared,
             authorized=yes_authorized,
         )
 
@@ -327,6 +347,7 @@ def scan(
             build=build_scan_report,
             total=lambda plan: plan.requested_probes,
             describe=describe,
+            estimate=lambda plan: _estimate_line(config, plan.requested_probes),
         )
 
     _run_command(build, out)
@@ -345,6 +366,7 @@ def discover(
     rate: RateOpt = DEFAULT_RATE_PER_S,
     max_hosts: MaxHostsOpt = DEFAULT_MAX_HOSTS,
     allow_public: AllowPublicOpt = False,
+    allow_shared: AllowSharedOpt = False,
     allowlist: AllowlistOpt = None,
     yes_authorized: AuthorizedOpt = False,
     fmt: FormatOpt = None,
@@ -369,6 +391,7 @@ def discover(
             rate=rate,
             max_hosts=max_hosts,
             allow_public=allow_public,
+            allow_shared=allow_shared,
             authorized=yes_authorized,
         )
 
@@ -390,9 +413,72 @@ def discover(
             build=build_discovery_report,
             total=lambda plan: plan.requested_hosts,
             describe=describe,
+            estimate=lambda plan: _estimate_line(config, plan.requested_probes),
         )
 
     _run_command(build, out)
+
+
+_REPO_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option("--host", help="Loopback address to bind. Other addresses are refused.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", min=1, max=65535, help="TCP port for the web UI and API.")] = 8765,
+    db: Annotated[Path, typer.Option("--db", help="SQLite file for scan history; created if missing.")] = Path("netscope.db"),
+    static_dir: Annotated[
+        Optional[Path],
+        typer.Option("--static-dir", help="Built frontend (frontend/dist). Defaults to the source checkout's build if present."),
+    ] = None,
+    max_jobs: Annotated[int, typer.Option("--max-jobs", min=1, max=8, help="Scans that may run at the same time.")] = 2,
+    verbose: VerboseOpt = False,
+) -> None:
+    """Run the local web application (UI + API). Loopback only; the API has no user authentication."""
+    configure_logging(VERBOSE if verbose else NORMAL, _err_console())
+    if not _is_loopback(host):
+        _fail(
+            f"refusing to bind to {host}: the NetScope web API is unauthenticated and may only listen on "
+            "loopback (127.0.0.1, ::1 or localhost)"
+        )
+        raise typer.Exit(EXIT_USAGE)
+    try:
+        import uvicorn
+
+        from netscope.api import create_app
+        from netscope.jobs import JobLimits
+        from netscope.store import ScanStore, StoreError
+    except ImportError as exc:
+        _fail(f"the web application needs the 'web' extra: pip install -e \".[web]\" ({exc.name} is missing)")
+        raise typer.Exit(EXIT_USAGE) from None
+
+    try:  # fail fast with a clear message rather than a traceback inside the server's startup
+        store = ScanStore(db)
+        try:
+            store.initialize()
+        finally:
+            store.close()
+    except (StoreError, OSError) as exc:
+        _fail(str(exc))
+        raise typer.Exit(EXIT_USAGE) from None
+
+    ui_dir = static_dir or (_REPO_FRONTEND_DIST if (_REPO_FRONTEND_DIST / "index.html").is_file() else None)
+    if ui_dir is None:
+        log.warning("no built frontend found; serving the API only (build it with: cd frontend; npm run build)")
+    allowed = ("127.0.0.1", "localhost", "::1", "[::1]", host)
+    web_app = create_app(db_path=db, static_dir=ui_dir, limits=JobLimits(max_running=max_jobs), allowed_hosts=allowed)
+    shown = f"[{host}]" if ":" in host else host
+    log.info("NetScope web UI: http://%s:%d  (API docs: /api/docs, history: %s)", shown, port, db.resolve())
+    uvicorn.run(web_app, host=host, port=port, log_level="debug" if verbose else "info")
 
 
 def main() -> None:
