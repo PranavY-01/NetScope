@@ -1,0 +1,19 @@
+{
+  "max_ports": 4096,
+  "max_probes": 20000,
+  "max_hosts": 1024,
+  "max_timeout_s": 10.0,
+  "max_concurrency": 256,
+  "max_rate_per_s": 500.0,
+  "max_allowlist_entries": 1024,
+  "max_running_jobs": 1,
+  "max_queued_jobs": 2,
+  "global_rate_per_s": 500.0,
+  "defaults": {
+    "ports": "22,80,443",
+    "timeout": 1.0,
+    "concurrency": 100,
+    "rate": 50.0,
+    "max_hosts": 256
+  }
+}

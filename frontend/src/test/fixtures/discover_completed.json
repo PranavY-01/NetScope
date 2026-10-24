@@ -1,0 +1,55 @@
+{
+  "id": "9efb41fef04d4bbda4a78a50184d6f8d",
+  "kind": "discover",
+  "target": "127.0.0.0/29",
+  "status": "completed",
+  "created_at": "2026-10-24T10:40:49.569343+00:00",
+  "started_at": "2026-10-24T10:40:49.570862+00:00",
+  "finished_at": "2026-10-24T10:40:49.787493+00:00",
+  "progress": {
+    "completed": 6,
+    "total": 6,
+    "unit": "hosts",
+    "determinate": true
+  },
+  "settings": {
+    "ports": [
+      22,
+      80,
+      443
+    ],
+    "timeout_s": 0.2,
+    "concurrency": 100,
+    "rate_per_s": 500.0,
+    "max_hosts": 256,
+    "allow_public": false,
+    "allow_shared": false,
+    "allowlist": null,
+    "fast_refusal_requested": true,
+    "network": "127.0.0.0/29",
+    "requested_hosts": 6,
+    "requested_probes": 18
+  },
+  "resolved_ips": [],
+  "target_errors": [],
+  "summary": {
+    "error": 1,
+    "no_response": 1,
+    "responsive": 4
+  },
+  "estimate": {
+    "probes": 18,
+    "min_seconds": 0.034,
+    "all_timeout_seconds": 0.234,
+    "bottleneck_if_all_time_out": "rate limit",
+    "assumptions": [
+      "Probe starts are spaced 1/rate apart across the whole run (the rate limiter), so the minimum is (probes - 1) / rate. It assumes every probe answers instantly.",
+      "Probes that get no answer hold a concurrency slot until the timeout. The 'all time out' figure assumes every probe does, so the slower of the rate limit and the concurrency limit decides the time.",
+      "Real runs fall between the two. Event-loop scheduling, DNS, and timer granularity (about 15.6 ms ticks on Windows with Python 3.11/3.12) add small deviations.",
+      "Raising concurrency does not speed up a run whose pace is set by the rate limit."
+    ]
+  },
+  "error": null,
+  "partial": false,
+  "exportable": true
+}

@@ -1,0 +1,53 @@
+{
+  "kind": "scan",
+  "items": [
+    {
+      "ip": "127.0.0.1",
+      "ports": [
+        {
+          "target_input": "127.0.0.1",
+          "ip": "127.0.0.1",
+          "port": 22,
+          "state": "closed",
+          "elapsed_ms": 0.539,
+          "started_at": "2026-10-24T10:40:49.541650Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        },
+        {
+          "target_input": "127.0.0.1",
+          "ip": "127.0.0.1",
+          "port": 80,
+          "state": "open",
+          "elapsed_ms": 0.113,
+          "started_at": "2026-10-24T10:40:49.542168Z",
+          "error_code": null,
+          "error_message": null
+        },
+        {
+          "target_input": "127.0.0.1",
+          "ip": "127.0.0.1",
+          "port": 443,
+          "state": "closed",
+          "elapsed_ms": 0.131,
+          "started_at": "2026-10-24T10:40:49.542168Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        },
+        {
+          "target_input": "127.0.0.1",
+          "ip": "127.0.0.1",
+          "port": 8080,
+          "state": "closed",
+          "elapsed_ms": 0.145,
+          "started_at": "2026-10-24T10:40:49.542168Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        }
+      ]
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}

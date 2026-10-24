@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "public_target",
+    "message": "public (globally routable) targets require --allow-public: 8.8.8.8"
+  }
+}

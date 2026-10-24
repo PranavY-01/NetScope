@@ -1,0 +1,261 @@
+{
+  "items": [
+    {
+      "id": "09fbbf5b285b4b77969661ae8582148b",
+      "kind": "scan",
+      "target": "127.0.0.1",
+      "status": "queued",
+      "created_at": "2026-10-24T10:40:49.845631+00:00",
+      "started_at": null,
+      "finished_at": null,
+      "progress": {
+        "completed": 0,
+        "total": 5,
+        "unit": "probes",
+        "determinate": true
+      },
+      "settings": {
+        "ports": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "timeout_s": 10.0,
+        "concurrency": 100,
+        "rate_per_s": 500.0,
+        "max_hosts": 256,
+        "allow_public": false,
+        "allow_shared": false,
+        "allowlist": null,
+        "fast_refusal_requested": true,
+        "requested_probes": 5
+      },
+      "resolved_ips": [
+        "127.0.0.1"
+      ],
+      "target_errors": [],
+      "summary": {},
+      "estimate": {
+        "probes": 5,
+        "min_seconds": 0.008,
+        "all_timeout_seconds": 10.008,
+        "bottleneck_if_all_time_out": "rate limit",
+        "assumptions": [
+          "Probe starts are spaced 1/rate apart across the whole run (the rate limiter), so the minimum is (probes - 1) / rate. It assumes every probe answers instantly.",
+          "Probes that get no answer hold a concurrency slot until the timeout. The 'all time out' figure assumes every probe does, so the slower of the rate limit and the concurrency limit decides the time.",
+          "Real runs fall between the two. Event-loop scheduling, DNS, and timer granularity (about 15.6 ms ticks on Windows with Python 3.11/3.12) add small deviations.",
+          "Raising concurrency does not speed up a run whose pace is set by the rate limit."
+        ]
+      },
+      "error": null,
+      "partial": false,
+      "exportable": false
+    },
+    {
+      "id": "03ce98e65a9e43a197faf239c4ee727e",
+      "kind": "scan",
+      "target": "127.0.0.1",
+      "status": "running",
+      "created_at": "2026-10-24T10:40:49.834353+00:00",
+      "started_at": "2026-10-24T10:40:49.835308+00:00",
+      "finished_at": null,
+      "progress": {
+        "completed": 3,
+        "total": 40,
+        "unit": "probes",
+        "determinate": true
+      },
+      "settings": {
+        "ports": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40
+        ],
+        "timeout_s": 10.0,
+        "concurrency": 4,
+        "rate_per_s": 500.0,
+        "max_hosts": 256,
+        "allow_public": false,
+        "allow_shared": false,
+        "allowlist": null,
+        "fast_refusal_requested": true,
+        "requested_probes": 40
+      },
+      "resolved_ips": [
+        "127.0.0.1"
+      ],
+      "target_errors": [],
+      "summary": {
+        "closed": 2,
+        "open": 1
+      },
+      "estimate": {
+        "probes": 40,
+        "min_seconds": 0.078,
+        "all_timeout_seconds": 100.0,
+        "bottleneck_if_all_time_out": "concurrency limit",
+        "assumptions": [
+          "Probe starts are spaced 1/rate apart across the whole run (the rate limiter), so the minimum is (probes - 1) / rate. It assumes every probe answers instantly.",
+          "Probes that get no answer hold a concurrency slot until the timeout. The 'all time out' figure assumes every probe does, so the slower of the rate limit and the concurrency limit decides the time.",
+          "Real runs fall between the two. Event-loop scheduling, DNS, and timer granularity (about 15.6 ms ticks on Windows with Python 3.11/3.12) add small deviations.",
+          "Raising concurrency does not speed up a run whose pace is set by the rate limit."
+        ]
+      },
+      "error": null,
+      "partial": false,
+      "exportable": false
+    },
+    {
+      "id": "9efb41fef04d4bbda4a78a50184d6f8d",
+      "kind": "discover",
+      "target": "127.0.0.0/29",
+      "status": "completed",
+      "created_at": "2026-10-24T10:40:49.569343+00:00",
+      "started_at": "2026-10-24T10:40:49.570862+00:00",
+      "finished_at": "2026-10-24T10:40:49.787493+00:00",
+      "progress": {
+        "completed": 6,
+        "total": 6,
+        "unit": "hosts",
+        "determinate": true
+      },
+      "settings": {
+        "ports": [
+          22,
+          80,
+          443
+        ],
+        "timeout_s": 0.2,
+        "concurrency": 100,
+        "rate_per_s": 500.0,
+        "max_hosts": 256,
+        "allow_public": false,
+        "allow_shared": false,
+        "allowlist": null,
+        "fast_refusal_requested": true,
+        "network": "127.0.0.0/29",
+        "requested_hosts": 6,
+        "requested_probes": 18
+      },
+      "resolved_ips": [],
+      "target_errors": [],
+      "summary": {
+        "error": 1,
+        "no_response": 1,
+        "responsive": 4
+      },
+      "estimate": {
+        "probes": 18,
+        "min_seconds": 0.034,
+        "all_timeout_seconds": 0.234,
+        "bottleneck_if_all_time_out": "rate limit",
+        "assumptions": [
+          "Probe starts are spaced 1/rate apart across the whole run (the rate limiter), so the minimum is (probes - 1) / rate. It assumes every probe answers instantly.",
+          "Probes that get no answer hold a concurrency slot until the timeout. The 'all time out' figure assumes every probe does, so the slower of the rate limit and the concurrency limit decides the time.",
+          "Real runs fall between the two. Event-loop scheduling, DNS, and timer granularity (about 15.6 ms ticks on Windows with Python 3.11/3.12) add small deviations.",
+          "Raising concurrency does not speed up a run whose pace is set by the rate limit."
+        ]
+      },
+      "error": null,
+      "partial": false,
+      "exportable": true
+    },
+    {
+      "id": "5a892eb893a84c65bc8a826006422cf6",
+      "kind": "scan",
+      "target": "127.0.0.1",
+      "status": "completed",
+      "created_at": "2026-10-24T10:40:49.536501+00:00",
+      "started_at": "2026-10-24T10:40:49.538512+00:00",
+      "finished_at": "2026-10-24T10:40:49.548484+00:00",
+      "progress": {
+        "completed": 4,
+        "total": 4,
+        "unit": "probes",
+        "determinate": true
+      },
+      "settings": {
+        "ports": [
+          22,
+          80,
+          443,
+          8080
+        ],
+        "timeout_s": 1.0,
+        "concurrency": 100,
+        "rate_per_s": 500.0,
+        "max_hosts": 256,
+        "allow_public": false,
+        "allow_shared": false,
+        "allowlist": null,
+        "fast_refusal_requested": true,
+        "requested_probes": 4
+      },
+      "resolved_ips": [
+        "127.0.0.1"
+      ],
+      "target_errors": [],
+      "summary": {
+        "closed": 3,
+        "open": 1
+      },
+      "estimate": {
+        "probes": 4,
+        "min_seconds": 0.006,
+        "all_timeout_seconds": 1.006,
+        "bottleneck_if_all_time_out": "rate limit",
+        "assumptions": [
+          "Probe starts are spaced 1/rate apart across the whole run (the rate limiter), so the minimum is (probes - 1) / rate. It assumes every probe answers instantly.",
+          "Probes that get no answer hold a concurrency slot until the timeout. The 'all time out' figure assumes every probe does, so the slower of the rate limit and the concurrency limit decides the time.",
+          "Real runs fall between the two. Event-loop scheduling, DNS, and timer granularity (about 15.6 ms ticks on Windows with Python 3.11/3.12) add small deviations.",
+          "Raising concurrency does not speed up a run whose pace is set by the rate limit."
+        ]
+      },
+      "error": null,
+      "partial": false,
+      "exportable": true
+    }
+  ],
+  "total": 4,
+  "limit": 25,
+  "offset": 0
+}

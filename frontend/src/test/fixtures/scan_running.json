@@ -1,0 +1,91 @@
+{
+  "id": "03ce98e65a9e43a197faf239c4ee727e",
+  "kind": "scan",
+  "target": "127.0.0.1",
+  "status": "running",
+  "created_at": "2026-10-24T10:40:49.834353+00:00",
+  "started_at": "2026-10-24T10:40:49.835308+00:00",
+  "finished_at": null,
+  "progress": {
+    "completed": 3,
+    "total": 40,
+    "unit": "probes",
+    "determinate": true
+  },
+  "settings": {
+    "ports": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40
+    ],
+    "timeout_s": 10.0,
+    "concurrency": 4,
+    "rate_per_s": 500.0,
+    "max_hosts": 256,
+    "allow_public": false,
+    "allow_shared": false,
+    "allowlist": null,
+    "fast_refusal_requested": true,
+    "requested_probes": 40
+  },
+  "resolved_ips": [
+    "127.0.0.1"
+  ],
+  "target_errors": [],
+  "summary": {
+    "closed": 2,
+    "open": 1
+  },
+  "estimate": {
+    "probes": 40,
+    "min_seconds": 0.078,
+    "all_timeout_seconds": 100.0,
+    "bottleneck_if_all_time_out": "concurrency limit",
+    "assumptions": [
+      "Probe starts are spaced 1/rate apart across the whole run (the rate limiter), so the minimum is (probes - 1) / rate. It assumes every probe answers instantly.",
+      "Probes that get no answer hold a concurrency slot until the timeout. The 'all time out' figure assumes every probe does, so the slower of the rate limit and the concurrency limit decides the time.",
+      "Real runs fall between the two. Event-loop scheduling, DNS, and timer granularity (about 15.6 ms ticks on Windows with Python 3.11/3.12) add small deviations.",
+      "Raising concurrency does not speed up a run whose pace is set by the rate limit."
+    ]
+  },
+  "error": null,
+  "partial": false,
+  "exportable": false
+}

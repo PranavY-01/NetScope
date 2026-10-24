@@ -1,0 +1,10 @@
+{
+  "total": 0,
+  "by_status": {
+    "queued": 0,
+    "running": 0,
+    "completed": 0,
+    "cancelled": 0,
+    "failed": 0
+  }
+}

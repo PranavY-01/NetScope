@@ -1,0 +1,242 @@
+{
+  "kind": "discover",
+  "items": [
+    {
+      "target_input": "127.0.0.0/29",
+      "ip": "127.0.0.1",
+      "state": "responsive",
+      "probed_ports": [
+        22,
+        80,
+        443
+      ],
+      "evidence": [
+        {
+          "port": 22,
+          "state": "closed",
+          "elapsed_ms": 0.707,
+          "started_at": "2026-10-24T10:40:49.574536Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        },
+        {
+          "port": 80,
+          "state": "open",
+          "elapsed_ms": 0.237,
+          "started_at": "2026-10-24T10:40:49.576550Z",
+          "error_code": null,
+          "error_message": null
+        },
+        {
+          "port": 443,
+          "state": "closed",
+          "elapsed_ms": 0.257,
+          "started_at": "2026-10-24T10:40:49.576550Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        }
+      ],
+      "elapsed_ms": 1.846,
+      "error_code": null,
+      "error_message": null
+    },
+    {
+      "target_input": "127.0.0.0/29",
+      "ip": "127.0.0.2",
+      "state": "no_response",
+      "probed_ports": [
+        22,
+        80,
+        443
+      ],
+      "evidence": [
+        {
+          "port": 22,
+          "state": "inconclusive",
+          "elapsed_ms": 174.691,
+          "started_at": "2026-10-24T10:40:49.576550Z",
+          "error_code": "timeout",
+          "error_message": "no response within 0.2s"
+        },
+        {
+          "port": 80,
+          "state": "inconclusive",
+          "elapsed_ms": 174.532,
+          "started_at": "2026-10-24T10:40:49.576550Z",
+          "error_code": "timeout",
+          "error_message": "no response within 0.2s"
+        },
+        {
+          "port": 443,
+          "state": "inconclusive",
+          "elapsed_ms": 174.731,
+          "started_at": "2026-10-24T10:40:49.576550Z",
+          "error_code": "timeout",
+          "error_message": "no response within 0.2s"
+        }
+      ],
+      "elapsed_ms": 174.799,
+      "error_code": null,
+      "error_message": null
+    },
+    {
+      "target_input": "127.0.0.0/29",
+      "ip": "127.0.0.3",
+      "state": "error",
+      "probed_ports": [
+        22,
+        80,
+        443
+      ],
+      "evidence": [
+        {
+          "port": 22,
+          "state": "error",
+          "elapsed_ms": 0.35,
+          "started_at": "2026-10-24T10:40:49.576550Z",
+          "error_code": "errno:EMFILE",
+          "error_message": "too many open files"
+        },
+        {
+          "port": 80,
+          "state": "inconclusive",
+          "elapsed_ms": 174.644,
+          "started_at": "2026-10-24T10:40:49.576550Z",
+          "error_code": "timeout",
+          "error_message": "no response within 0.2s"
+        },
+        {
+          "port": 443,
+          "state": "inconclusive",
+          "elapsed_ms": 202.29,
+          "started_at": "2026-10-24T10:40:49.577782Z",
+          "error_code": "timeout",
+          "error_message": "no response within 0.2s"
+        }
+      ],
+      "elapsed_ms": 204.217,
+      "error_code": "errno:EMFILE",
+      "error_message": "probe to port 22 failed, so no_response cannot be asserted: too many open files"
+    },
+    {
+      "target_input": "127.0.0.0/29",
+      "ip": "127.0.0.4",
+      "state": "responsive",
+      "probed_ports": [
+        22,
+        80,
+        443
+      ],
+      "evidence": [
+        {
+          "port": 22,
+          "state": "closed",
+          "elapsed_ms": 0.932,
+          "started_at": "2026-10-24T10:40:49.577782Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        },
+        {
+          "port": 80,
+          "state": "open",
+          "elapsed_ms": 0.312,
+          "started_at": "2026-10-24T10:40:49.604560Z",
+          "error_code": null,
+          "error_message": null
+        },
+        {
+          "port": 443,
+          "state": "closed",
+          "elapsed_ms": 0.345,
+          "started_at": "2026-10-24T10:40:49.604560Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        }
+      ],
+      "elapsed_ms": 26.792,
+      "error_code": null,
+      "error_message": null
+    },
+    {
+      "target_input": "127.0.0.0/29",
+      "ip": "127.0.0.5",
+      "state": "responsive",
+      "probed_ports": [
+        22,
+        80,
+        443
+      ],
+      "evidence": [
+        {
+          "port": 22,
+          "state": "closed",
+          "elapsed_ms": 0.387,
+          "started_at": "2026-10-24T10:40:49.604560Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        },
+        {
+          "port": 80,
+          "state": "open",
+          "elapsed_ms": 0.386,
+          "started_at": "2026-10-24T10:40:49.604560Z",
+          "error_code": null,
+          "error_message": null
+        },
+        {
+          "port": 443,
+          "state": "closed",
+          "elapsed_ms": 0.393,
+          "started_at": "2026-10-24T10:40:49.604560Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        }
+      ],
+      "elapsed_ms": 0.45,
+      "error_code": null,
+      "error_message": null
+    },
+    {
+      "target_input": "127.0.0.0/29",
+      "ip": "127.0.0.6",
+      "state": "responsive",
+      "probed_ports": [
+        22,
+        80,
+        443
+      ],
+      "evidence": [
+        {
+          "port": 22,
+          "state": "closed",
+          "elapsed_ms": 0.454,
+          "started_at": "2026-10-24T10:40:49.604560Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        },
+        {
+          "port": 80,
+          "state": "open",
+          "elapsed_ms": 0.453,
+          "started_at": "2026-10-24T10:40:49.604560Z",
+          "error_code": null,
+          "error_message": null
+        },
+        {
+          "port": 443,
+          "state": "closed",
+          "elapsed_ms": 0.035,
+          "started_at": "2026-10-24T10:40:49.604560Z",
+          "error_code": "errno:ECONNREFUSED",
+          "error_message": "connection refused"
+        }
+      ],
+      "elapsed_ms": 0.569,
+      "error_code": null,
+      "error_message": null
+    }
+  ],
+  "total": 6,
+  "limit": 50,
+  "offset": 0
+}
